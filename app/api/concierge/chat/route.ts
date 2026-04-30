@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
-import type { BriefingContextResponse, WrittenBriefing } from "@/lib/google/types";
+import type { BriefingContextResponse, GmailFullMessageContent, WrittenBriefing } from "@/lib/google/types";
 import { openAIProviderErrorMessage } from "@/lib/openai/errors";
 
 export const runtime = "nodejs";
@@ -13,6 +13,8 @@ const MAX_CONTEXT_EVENTS = 20;
 const MAX_EMAIL_SNIPPET_CHARS = 220;
 const MAX_CALENDAR_DESCRIPTION_CHARS = 260;
 const MAX_TRANSCRIPT_CHARS = 4000;
+const MAX_FULL_MESSAGES = 3;
+const MAX_FULL_EMAIL_BODY_CHARS = 8_000;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -23,6 +25,7 @@ type ConciergeRequest = {
   messages?: ChatMessage[];
   context?: BriefingContextResponse | null;
   briefing?: WrittenBriefing | null;
+  fullMessages?: GmailFullMessageContent[];
 };
 
 type OpenAIResponse = {
@@ -101,6 +104,19 @@ function compactContext(context?: BriefingContextResponse | null, briefing?: Wri
   };
 }
 
+function compactFullMessages(messages?: GmailFullMessageContent[]) {
+  return (
+    messages?.slice(0, MAX_FULL_MESSAGES).map((message) => ({
+      body: truncateText(message.body, MAX_FULL_EMAIL_BODY_CHARS),
+      date: message.date,
+      from: message.from,
+      id: message.id,
+      subject: message.subject,
+      timestamp: message.timestamp,
+    })) ?? []
+  );
+}
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -120,21 +136,22 @@ export async function POST(request: NextRequest) {
       return errorResponse("Missing user message.", 400);
     }
 
-    // Concierge receives bounded generated briefing text plus metadata snippets only.
-    // It must not infer access to full email bodies or send messages on the user's behalf.
+    // Concierge receives bounded snippets by default. Full bodies are included only
+    // for user-approved selected messages and are never persisted server-side here.
     const response = await fetch("https://api.openai.com/v1/responses", {
       body: JSON.stringify({
         input: [
           {
             role: "system",
             content:
-              "You are InboxCast Concierge. Answer questions using only the provided generated briefing, Gmail metadata, snippets, labels, and Calendar event snippets. Do not claim to have read full email bodies. If a snippet is insufficient, say that only preview/snippet data is available. Do not send emails. If drafting replies, provide drafts only.",
+              "You are InboxCast Concierge. Answer questions using only the provided generated briefing, Gmail metadata, snippets, labels, Calendar event snippets, and any explicitly user-approved selected full email messages. Do not claim to have read full email bodies unless selectedFullEmailMessages are provided. If a snippet is insufficient, say that only preview/snippet data is available. Clearly distinguish selected full-email context from snippet-only context. Do not send emails. If drafting replies, provide drafts only.",
           },
           {
             role: "user",
             content: JSON.stringify({
               context: compactContext(payload.context, payload.briefing),
               conversation: messages,
+              selectedFullEmailMessages: compactFullMessages(payload.fullMessages),
             }),
           },
         ],

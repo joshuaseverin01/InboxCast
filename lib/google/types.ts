@@ -22,6 +22,16 @@ export type GmailMetadataMessage = {
   labels: string[];
 };
 
+export type GmailFullMessageContent = {
+  id: string;
+  threadId: string;
+  from: string;
+  subject: string;
+  date: string;
+  timestamp: string;
+  body: string;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   title: string;

@@ -1,5 +1,5 @@
 import { fetchGoogleJson } from "@/lib/google/fetch";
-import type { BriefingContextFilters, GmailMetadataMessage } from "@/lib/google/types";
+import type { BriefingContextFilters, GmailFullMessageContent, GmailMetadataMessage } from "@/lib/google/types";
 
 type GmailListResponse = {
   messages?: Array<{
@@ -16,12 +16,21 @@ type GmailMessageResponse = {
   labelIds?: string[];
   internalDate?: string;
   snippet?: string;
-  payload?: {
-    headers?: Array<{
-      name: string;
-      value: string;
-    }>;
+  payload?: GmailPayload;
+};
+
+type GmailPayload = {
+  mimeType?: string;
+  filename?: string;
+  headers?: Array<{
+    name: string;
+    value: string;
+  }>;
+  body?: {
+    data?: string;
+    attachmentId?: string;
   };
+  parts?: GmailPayload[];
 };
 
 export type GmailMetadataResult = {
@@ -33,6 +42,7 @@ export type GmailMetadataResult = {
 const MAX_GMAIL_MESSAGES = 20;
 const MAX_GMAIL_MESSAGES_TO_SCAN = 200;
 const GMAIL_METADATA_CONCURRENCY = 2;
+const MAX_FULL_EMAIL_CHARS = 8_000;
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -49,16 +59,70 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function getHeader(message: GmailMessageResponse, headerName: string) {
+function getHeaderFromPayload(payload: GmailPayload | undefined, headerName: string) {
   return (
-    message.payload?.headers?.find((header) => header.name.toLowerCase() === headerName.toLowerCase())?.value ??
-    ""
+    payload?.headers?.find((header) => header.name.toLowerCase() === headerName.toLowerCase())?.value ?? ""
   );
+}
+
+function getHeader(message: GmailMessageResponse, headerName: string) {
+  return getHeaderFromPayload(message.payload, headerName);
 }
 
 function cleanSnippet(snippet?: string) {
   if (!snippet) return undefined;
   return snippet.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function decodeBase64Url(data?: string) {
+  if (!data) return "";
+
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+}
+
+function stripHtml(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function cleanBodyText(value: string) {
+  return value
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, MAX_FULL_EMAIL_CHARS);
+}
+
+function collectBodyParts(payload: GmailPayload | undefined, targetMimeType: "text/plain" | "text/html"): string[] {
+  if (!payload) return [];
+
+  const parts = payload.parts?.flatMap((part) => collectBodyParts(part, targetMimeType)) ?? [];
+  const isAttachment = Boolean(payload.filename || payload.body?.attachmentId);
+  const body = !isAttachment && payload.mimeType === targetMimeType ? decodeBase64Url(payload.body?.data) : "";
+
+  return body ? [body, ...parts] : parts;
+}
+
+function extractBodyText(payload: GmailPayload | undefined) {
+  const plainText = collectBodyParts(payload, "text/plain").join("\n\n");
+  if (plainText.trim()) return cleanBodyText(plainText);
+
+  const htmlText = collectBodyParts(payload, "text/html").map(stripHtml).join("\n\n");
+  if (htmlText.trim()) return cleanBodyText(htmlText);
+
+  return "";
 }
 
 function isNewsletter(message: GmailMessageResponse) {
@@ -159,6 +223,29 @@ async function getMessageMetadata(accessToken: string, id: string) {
   return fetchGoogleJson<GmailMessageResponse>(url, accessToken);
 }
 
+async function getFullMessage(accessToken: string, id: string) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`);
+  url.searchParams.set("format", "full");
+  url.searchParams.set("fields", "id,threadId,internalDate,payload");
+
+  return fetchGoogleJson<GmailMessageResponse>(url, accessToken);
+}
+
+function toFullMessageContent(message: GmailMessageResponse): GmailFullMessageContent {
+  const internalDateMs = Number(message.internalDate);
+  const timestamp = Number.isFinite(internalDateMs) ? new Date(internalDateMs).toISOString() : new Date().toISOString();
+
+  return {
+    body: extractBodyText(message.payload),
+    date: getHeader(message, "Date") || timestamp,
+    from: getHeader(message, "From") || "Unknown sender",
+    id: message.id,
+    subject: getHeader(message, "Subject") || "(No subject)",
+    threadId: message.threadId,
+    timestamp,
+  };
+}
+
 export async function fetchGmailMetadataForRange({
   accessToken,
   end,
@@ -183,4 +270,21 @@ export async function fetchGmailMetadataForRange({
     resultSizeEstimate: scanned.resultSizeEstimate,
     truncated: scanned.truncated,
   };
+}
+
+export async function fetchSelectedGmailFullMessages({
+  accessToken,
+  messageIds,
+}: {
+  accessToken: string;
+  messageIds: string[];
+}): Promise<GmailFullMessageContent[]> {
+  const messages: GmailFullMessageContent[] = [];
+
+  for (const id of messageIds) {
+    // Full content is fetched only for user-selected messages; attachments are not downloaded.
+    messages.push(toFullMessageContent(await getFullMessage(accessToken, id)));
+  }
+
+  return messages;
 }

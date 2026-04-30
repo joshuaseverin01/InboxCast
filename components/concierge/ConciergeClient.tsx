@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Copy, Loader2, Save, SendHorizonal, Sparkles, UserRound } from "lucide-react";
+import { Copy, Loader2, MailOpen, Save, SendHorizonal, Sparkles, Trash2, UserRound } from "lucide-react";
 import type {
   BriefingContextErrorResponse,
   BriefingContextRequest,
   BriefingContextResponse,
+  GmailFullMessageContent,
+  GmailMetadataMessage,
   WrittenBriefing,
 } from "@/lib/google/types";
 import { incrementUsageCount } from "@/lib/localUsage";
@@ -65,6 +67,20 @@ type ParsedContextQuestion = {
   rangeLabel: string;
   target: "email" | "calendar" | "both";
 };
+
+type FullReadStatus = {
+  state: "loading" | "success" | "error";
+  message: string;
+};
+
+type ReadMessagesResponse = {
+  messages?: GmailFullMessageContent[];
+  error?: {
+    message?: string;
+  };
+};
+
+const MAX_SELECTED_EMAILS = 3;
 
 function friendlyError(message: string) {
   if (message.includes("OPENAI_API_KEY")) {
@@ -297,6 +313,10 @@ function formatSimpleContextAnswer(context: BriefingContextResponse, intent: Par
   return formatEmailList(context, intent.rangeLabel);
 }
 
+function compactEmailPreview(email: GmailMetadataMessage) {
+  return email.snippet || "No snippet was returned for this message.";
+}
+
 function loadOutputs() {
   try {
     return JSON.parse(window.localStorage.getItem(outputsStorageKey) ?? "[]") as SavedOutput[];
@@ -321,6 +341,10 @@ function saveOutput(content: string) {
 export function ConciergeClient() {
   const [latest, setLatest] = useState<LatestBriefing | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [lastContext, setLastContext] = useState<BriefingContextResponse | null>(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [fullMessages, setFullMessages] = useState<GmailFullMessageContent[]>([]);
+  const [fullReadStatus, setFullReadStatus] = useState<FullReadStatus | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -346,12 +370,88 @@ export function ConciergeClient() {
     return payload;
   }
 
+  function toggleMessageSelection(messageId: string) {
+    setSelectedMessageIds((current) => {
+      if (current.includes(messageId)) return current.filter((id) => id !== messageId);
+      if (current.length >= MAX_SELECTED_EMAILS) return current;
+      return [...current, messageId];
+    });
+  }
+
+  function clearConversation() {
+    setMessages([]);
+    setInput("");
+    setError(null);
+    setSavedId(null);
+    setLastContext(null);
+    setSelectedMessageIds([]);
+    setFullMessages([]);
+    setFullReadStatus(null);
+  }
+
+  async function readSelectedEmails(messageIds: string[]) {
+    if (messageIds.length === 0) {
+      setFullReadStatus({ message: "Select at least one email to read.", state: "error" });
+      return;
+    }
+
+    if (messageIds.length > MAX_SELECTED_EMAILS) {
+      setFullReadStatus({ message: `Select up to ${MAX_SELECTED_EMAILS} emails at a time.`, state: "error" });
+      return;
+    }
+
+    setFullReadStatus({ message: "Reading selected email content...", state: "loading" });
+    setError(null);
+
+    try {
+      const response = await fetch("/api/google/messages/read", {
+        body: JSON.stringify({ messageIds }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as ReadMessagesResponse | null;
+
+      if (!response.ok || !payload?.messages) {
+        throw new Error(payload?.error?.message ?? "InboxCast could not read the selected email content.");
+      }
+
+      const readMessages = payload.messages;
+      setFullMessages((current) => {
+        const byId = new Map(current.map((message) => [message.id, message]));
+        for (const message of readMessages) {
+          byId.set(message.id, message);
+        }
+        return Array.from(byId.values()).slice(0, MAX_SELECTED_EMAILS);
+      });
+      setSelectedMessageIds([]);
+      setFullReadStatus({
+        message: "Selected email content is available for follow-up questions in this conversation.",
+        state: "success",
+      });
+      setMessages((current) => [
+        ...current,
+        {
+          content: `Full-read context approved for ${readMessages
+            .map((message) => `"${message.subject}" from ${message.from}`)
+            .join(", ")}. Ask a follow-up when you're ready.`,
+          id: crypto.randomUUID(),
+          role: "assistant",
+        },
+      ]);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "InboxCast could not read the selected email content.";
+      setFullReadStatus({ message: friendlyError(message), state: "error" });
+    }
+  }
+
   async function sendMessage(content: string) {
     if (!content.trim()) return;
 
     const contextIntent = parseContextQuestion(content);
 
-    if (!latest && !contextIntent) {
+    if (!latest && !lastContext && fullMessages.length === 0 && !contextIntent) {
       setError("Ask with a time range, like 'since yesterday' or 'last 24 hours', or generate a briefing first.");
       return;
     }
@@ -370,6 +470,14 @@ export function ConciergeClient() {
 
     try {
       const freshContext = contextIntent ? await fetchContextForQuestion(contextIntent.range) : null;
+      const approvedFullMessages = freshContext ? [] : fullMessages;
+
+      if (freshContext) {
+        setLastContext(freshContext);
+        setSelectedMessageIds([]);
+        setFullMessages([]);
+        setFullReadStatus(null);
+      }
 
       if (contextIntent?.kind === "simple_list" && freshContext) {
         setMessages((current) => [
@@ -388,7 +496,8 @@ export function ConciergeClient() {
         body: JSON.stringify({
           briefing: latest?.briefing ?? null,
           // Freshly fetched context stays in component state for this request only.
-          context: freshContext ?? latest?.context ?? null,
+          context: freshContext ?? latest?.context ?? lastContext ?? null,
+          fullMessages: approvedFullMessages,
           messages: nextMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
         }),
         headers: {
@@ -479,6 +588,12 @@ export function ConciergeClient() {
             {suggestion}
           </button>
         ))}
+        {(messages.length > 0 || lastContext || fullMessages.length > 0) && (
+          <button className="secondary-button px-4 py-2 text-xs text-mist-300" onClick={clearConversation} type="button">
+            <Trash2 className="h-3.5 w-3.5" />
+            Clear conversation
+          </button>
+        )}
       </div>
 
       <div className="space-y-5">
@@ -534,6 +649,95 @@ export function ConciergeClient() {
       {error && (
         <div className="mt-5 rounded-3xl border border-ember-300/25 bg-ember-300/10 p-4 text-sm leading-6 text-ember-300">
           {error}
+        </div>
+      )}
+
+      {lastContext && lastContext.gmail.messages.length > 0 && (
+        <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.035] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-mist-50">Fetched email context</p>
+              <p className="mt-1 text-sm leading-6 text-mist-500">
+                InboxCast will read only the selected emails. It will not read your full inbox.
+              </p>
+            </div>
+            <button
+              className="secondary-button px-4 py-2 text-xs"
+              disabled={selectedMessageIds.length === 0 || fullReadStatus?.state === "loading"}
+              onClick={() => readSelectedEmails(selectedMessageIds)}
+              type="button"
+            >
+              {fullReadStatus?.state === "loading" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <MailOpen className="h-3.5 w-3.5" />
+              )}
+              Read selected emails
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            {lastContext.gmail.messages.map((email) => {
+              const selected = selectedMessageIds.includes(email.id);
+              const fullRead = fullMessages.some((message) => message.id === email.id);
+
+              return (
+                <article className="rounded-2xl border border-white/10 bg-ink-950/[0.42] p-3" key={email.id}>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <button
+                      aria-pressed={selected}
+                      className={cn(
+                        "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                        selected
+                          ? "border-teal-300/35 bg-teal-300/10 text-teal-100"
+                          : "border-white/10 bg-white/[0.035] text-mist-300 hover:border-white/20",
+                      )}
+                      disabled={!selected && selectedMessageIds.length >= MAX_SELECTED_EMAILS}
+                      onClick={() => toggleMessageSelection(email.id)}
+                      type="button"
+                    >
+                      {selected ? "Selected" : fullRead ? "Full read loaded" : "Select"}
+                    </button>
+                    <button
+                      className="secondary-button px-3 py-2 text-xs"
+                      disabled={fullReadStatus?.state === "loading" || fullRead}
+                      onClick={() => readSelectedEmails([email.id])}
+                      type="button"
+                    >
+                      <MailOpen className="h-3.5 w-3.5" />
+                      {fullRead ? "Full email read" : "Read full email"}
+                    </button>
+                  </div>
+                  <div className="mt-3 min-w-0">
+                    <p className="truncate text-sm font-semibold text-mist-50">{email.from}</p>
+                    <p className="mt-1 text-sm text-mist-300">{email.subject}</p>
+                    <p className="mt-1 text-xs text-mist-500">{formatTimestamp(email.timestamp)}</p>
+                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-mist-500">{compactEmailPreview(email)}</p>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <p className="mt-3 text-xs leading-5 text-mist-600">
+            Select up to {MAX_SELECTED_EMAILS} emails. Full bodies stay in this browser session only and are sent to
+            Concierge only for follow-up answers.
+          </p>
+
+          {fullReadStatus && (
+            <div
+              className={[
+                "mt-3 rounded-2xl border p-3 text-sm leading-6",
+                fullReadStatus.state === "success"
+                  ? "border-teal-300/25 bg-teal-300/10 text-teal-100"
+                  : fullReadStatus.state === "error"
+                    ? "border-ember-300/25 bg-ember-300/10 text-ember-300"
+                    : "border-white/10 bg-white/[0.04] text-mist-300",
+              ].join(" ")}
+            >
+              {fullReadStatus.message}
+            </div>
+          )}
         </div>
       )}
 

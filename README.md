@@ -4,11 +4,12 @@ InboxCast is a private personal MVP that turns Google Gmail metadata and Calenda
 
 ## What Works
 
-- Google OAuth with Gmail metadata and Calendar events read-only scopes
+- Google OAuth with Gmail metadata, optional selected-message read-only, Gmail compose, and Calendar events read-only scopes
 - Server-side Gmail metadata and Calendar event fetching
 - Written AI briefing generation
 - OpenAI text-to-speech audio generation
 - AI Concierge over the latest generated briefing
+- Optional user-approved full-content reading for selected Gmail messages in Concierge
 - Local browser Outputs for saved Concierge responses, including browser-side PDF export
 - User-approved Gmail draft creation from saved Outputs
 
@@ -47,11 +48,12 @@ npm run dev
 - Set the same environment variables in Vercel.
 - Use the deployed URL as `AUTH_URL`.
 - Configure the Google OAuth redirect URI for `/api/auth/callback/google`.
-- Add these Google OAuth consent screen scopes: `openid`, `email`, `profile`, `https://www.googleapis.com/auth/gmail.metadata`, `https://www.googleapis.com/auth/gmail.compose`, and `https://www.googleapis.com/auth/calendar.events.readonly`.
-- After adding `gmail.compose`, reconnect Google so the session has draft permission.
-- The app does not request Gmail send, modify, or full-read scopes.
+- Add these Google OAuth consent screen scopes: `openid`, `email`, `profile`, `https://www.googleapis.com/auth/gmail.metadata`, `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.compose`, and `https://www.googleapis.com/auth/calendar.events.readonly`.
+- After adding `gmail.readonly` or `gmail.compose`, reconnect Google so the session has the new permission.
+- The app does not request Gmail send, modify, or `mail.google.com` scopes.
+- Full email bodies are read only after the user explicitly selects specific messages in Concierge.
 - Gmail draft creation only creates a draft for user review. InboxCast never sends email.
-- The app does not fetch full email bodies or store Google OAuth tokens in `localStorage`.
+- The app does not store full email bodies or Google OAuth tokens in `localStorage`.
 - PDF exports are generated in the browser and are not uploaded or stored permanently.
 - OpenAI usage counters in Settings are approximate browser-local counts, not billing records.
 
