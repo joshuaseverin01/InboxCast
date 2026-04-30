@@ -64,7 +64,7 @@ export function Sidebar() {
       <div className="surface-card mt-8 rounded-[2rem] p-4">
         <div className="flex items-center gap-2 text-xs font-medium uppercase text-teal-300">
           <Sparkles className="h-4 w-4" />
-          Stage 3 Prototype
+          Private MVP
         </div>
         <p className="mt-3 text-sm leading-6 text-mist-300">
           Google context fetches run server-side with Gmail metadata and Calendar read-only access.

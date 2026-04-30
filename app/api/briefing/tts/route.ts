@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { openAIProviderErrorMessage } from "@/lib/openai/errors";
 
 export const runtime = "nodejs";
 
-const TTS_MODEL = "gpt-4o-mini-tts";
+const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 const TTS_VOICE = "coral";
 const MAX_TTS_CHARS = 4096;
 
@@ -51,9 +52,15 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      await response.json().catch(() => null);
+      const openAiPayload = (await response.json().catch(() => null)) as Parameters<
+        typeof openAIProviderErrorMessage
+      >[2];
       return errorResponse(
-        "OpenAI could not generate audio. Check server OpenAI configuration and TTS model access.",
+        openAIProviderErrorMessage(
+          response.status,
+          "OpenAI could not generate audio. Check server OpenAI configuration and TTS model access.",
+          openAiPayload,
+        ),
         response.status,
       );
     }

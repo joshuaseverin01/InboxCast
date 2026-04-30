@@ -49,7 +49,7 @@ export function AudioPlayerCard({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs font-medium text-teal-300">
             <Sparkles className="h-3.5 w-3.5" />
-            Generated briefing
+            {variant === "hero" ? "Sample briefing" : "Generated briefing"}
           </div>
           <h2 className={cn("mt-4 font-semibold text-mist-50", variant === "hero" ? "text-2xl" : "text-3xl")}>
             {briefing.title}
@@ -70,7 +70,7 @@ export function AudioPlayerCard({
         </div>
         <div className="mt-3 h-2 rounded-full bg-white/[0.08]">
           <div
-            aria-label="Mock audio progress"
+            aria-label="Demo audio progress"
             className="h-full rounded-full bg-gradient-to-r from-teal-300 via-violet-300 to-ember-300 transition-all"
             role="progressbar"
             style={{ width: `${percent}%` }}

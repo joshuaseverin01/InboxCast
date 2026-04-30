@@ -1,10 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
 import type { BriefingContextResponse, WrittenBriefing } from "@/lib/google/types";
+import { openAIProviderErrorMessage } from "@/lib/openai/errors";
 
 export const runtime = "nodejs";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
+const MODEL = process.env.OPENAI_CONCIERGE_MODEL || "gpt-4o-mini";
+const MAX_CHAT_MESSAGES = 6;
+const MAX_CHAT_MESSAGE_CHARS = 1200;
+const MAX_CONTEXT_EMAILS = 10;
+const MAX_CONTEXT_EVENTS = 20;
+const MAX_EMAIL_SNIPPET_CHARS = 220;
+const MAX_CALENDAR_DESCRIPTION_CHARS = 260;
+const MAX_TRANSCRIPT_CHARS = 4000;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -45,21 +53,33 @@ function outputText(response: OpenAIResponse) {
   );
 }
 
+function truncateText(value: string | undefined, maxLength: number) {
+  if (!value) return value;
+  return value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}...` : value;
+}
+
+function compactMessages(messages: ChatMessage[]) {
+  return messages.slice(-MAX_CHAT_MESSAGES).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, MAX_CHAT_MESSAGE_CHARS),
+  }));
+}
+
 function compactContext(context?: BriefingContextResponse | null, briefing?: WrittenBriefing | null) {
   return {
     briefing: briefing
       ? {
           actionItems: briefing.actionItems,
           calendarContext: briefing.calendarContext,
-          fullTranscript: briefing.fullTranscript.slice(0, 5000),
+          fullTranscript: briefing.fullTranscript.slice(0, MAX_TRANSCRIPT_CHARS),
           priorityEmails: briefing.priorityEmails,
           suggestedNextSteps: briefing.suggestedNextSteps,
         }
       : null,
     calendar: {
       events:
-        context?.calendar.events.slice(0, 30).map((event) => ({
-          descriptionSnippet: event.descriptionSnippet,
+        context?.calendar.events.slice(0, MAX_CONTEXT_EVENTS).map((event) => ({
+          descriptionSnippet: truncateText(event.descriptionSnippet, MAX_CALENDAR_DESCRIPTION_CHARS),
           end: event.end,
           location: event.location,
           start: event.start,
@@ -68,11 +88,11 @@ function compactContext(context?: BriefingContextResponse | null, briefing?: Wri
     },
     gmail: {
       messages:
-        context?.gmail.messages.slice(0, 20).map((message) => ({
+        context?.gmail.messages.slice(0, MAX_CONTEXT_EMAILS).map((message) => ({
           date: message.date,
           from: message.from,
           labels: message.labels,
-          snippet: message.snippet,
+          snippet: truncateText(message.snippet, MAX_EMAIL_SNIPPET_CHARS),
           subject: message.subject,
           timestamp: message.timestamp,
         })) ?? [],
@@ -93,7 +113,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const payload = (await request.json()) as ConciergeRequest;
-    const messages = payload.messages?.slice(-8) ?? [];
+    const messages = compactMessages(payload.messages ?? []);
     const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
 
     if (!lastUserMessage?.content.trim()) {
@@ -133,7 +153,11 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       return errorResponse(
-        "Concierge could not respond. Check server OpenAI configuration and model access.",
+        openAIProviderErrorMessage(
+          response.status,
+          "Concierge could not respond. Check server OpenAI configuration and model access.",
+          data,
+        ),
         response.status,
       );
     }

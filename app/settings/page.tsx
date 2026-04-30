@@ -1,8 +1,10 @@
-import { ShieldAlert, SlidersHorizontal, Trash2, Volume2 } from "lucide-react";
+import { ShieldAlert, SlidersHorizontal, Volume2 } from "lucide-react";
 import { auth } from "@/auth";
 import { AppShell } from "@/components/AppShell";
+import { DeleteLocalDataButton } from "@/components/DeleteLocalDataButton";
 import { GoogleConnectionPanel } from "@/components/GoogleConnectionPanel";
 import { PrivatePrototypeNotice } from "@/components/PrivatePrototypeNotice";
+import { UsageSummaryPanel } from "@/components/UsageSummaryPanel";
 import { getGoogleConnectionState } from "@/lib/googleAuth";
 import { briefingStyles, voiceOptions } from "@/lib/mockData";
 
@@ -43,6 +45,8 @@ export default async function SettingsPage({
         <PrivatePrototypeNotice />
 
         <GoogleConnectionPanel connection={googleConnection} message={connectionMessage} />
+
+        <UsageSummaryPanel />
 
         <section className="grid gap-6 lg:grid-cols-2">
           <article className="surface-card rounded-[2rem] p-5 sm:p-6">
@@ -113,10 +117,7 @@ export default async function SettingsPage({
             >
               Manage Google permissions
             </a>
-            <button className="secondary-button justify-start rounded-2xl px-4 py-4 text-left text-ember-300" type="button">
-              <Trash2 className="h-4 w-4" />
-              Delete local data
-            </button>
+            <DeleteLocalDataButton />
           </div>
         </section>
       </div>

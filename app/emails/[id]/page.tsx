@@ -28,6 +28,11 @@ export default async function EmailDetailPage({
           Back to Briefing
         </Link>
 
+        <div className="rounded-3xl border border-ember-300/25 bg-ember-300/10 p-4 text-sm leading-6 text-ember-300">
+          Demo-only email detail. The production briefing flow uses real Gmail metadata and does not fetch full email
+          bodies yet.
+        </div>
+
         <section className="surface-card rounded-[2rem] p-5 sm:p-7">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calendar, Check, Clock, Loader2 } from "lucide-react";
 import type { BriefingContextFilters, BriefingContextRequest } from "@/lib/google/types";
@@ -26,6 +26,18 @@ function formatDateInput(date: Date) {
 
 function formatTimeInput(date: Date) {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function rangeFromValue(value: TimeRangeSelectorValue) {
+  const start = new Date(value.start);
+  const end = new Date(value.end);
+
+  return {
+    endDate: formatDateInput(end),
+    endTime: formatTimeInput(end),
+    startDate: formatDateInput(start),
+    startTime: formatTimeInput(start),
+  };
 }
 
 function getInitialRange() {
@@ -55,16 +67,30 @@ function toFilters(toggles: typeof initialToggles): BriefingContextFilters {
   };
 }
 
+function togglesFromFilters(filters?: BriefingContextFilters) {
+  if (!filters) return initialToggles;
+
+  return initialToggles.map((item) => {
+    if (item.id === "calendar") return { ...item, enabled: filters.includeCalendar !== false };
+    if (item.id === "newsletters") return { ...item, enabled: filters.includeNewsletters !== false };
+    if (item.id === "promotions") return { ...item, enabled: filters.includePromotions === true };
+    if (item.id === "includeUnreadOnly") return { ...item, enabled: filters.includeUnreadOnly === true };
+    return item;
+  });
+}
+
 export function TimeRangeSelector({
   badge = "Server-side fetch",
   loading = false,
   onCreate,
   submitLabel = "Fetch Gmail & Calendar context",
+  value,
 }: {
   badge?: string;
   loading?: boolean;
   onCreate?: (value: TimeRangeSelectorValue) => void;
   submitLabel?: string;
+  value?: TimeRangeSelectorValue | null;
 }) {
   const router = useRouter();
   const initialRange = getInitialRange();
@@ -73,6 +99,17 @@ export function TimeRangeSelector({
   const [startTime, setStartTime] = useState(initialRange.startTime);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [endTime, setEndTime] = useState(initialRange.endTime);
+
+  useEffect(() => {
+    if (!value) return;
+
+    const nextRange = rangeFromValue(value);
+    setStartDate(nextRange.startDate);
+    setStartTime(nextRange.startTime);
+    setEndDate(nextRange.endDate);
+    setEndTime(nextRange.endTime);
+    setToggles(togglesFromFilters(value.filters));
+  }, [value]);
 
   function toggleOption(id: ToggleId) {
     setToggles((current) =>

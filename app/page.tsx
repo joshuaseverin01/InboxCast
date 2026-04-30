@@ -70,7 +70,7 @@ export default function LandingPage() {
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link className="secondary-button" href="/briefing">
-              View Demo Briefing
+              Open Briefing Flow
             </Link>
           </div>
         </div>

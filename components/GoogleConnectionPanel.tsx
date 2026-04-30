@@ -59,7 +59,7 @@ export function GoogleConnectionPanel({
             {connection.connected ? "Google is connected" : "Connect Google to unlock real briefings"}
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-mist-500">
-            Stage 3 keeps Google API calls server-side and keeps OAuth tokens out of browser-readable session data.
+            InboxCast keeps Google API calls server-side and keeps OAuth tokens out of browser-readable session data.
             Full email bodies are not fetched.
           </p>
         </div>

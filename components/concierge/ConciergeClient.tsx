@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Copy, Loader2, Save, SendHorizonal, Sparkles, UserRound } from "lucide-react";
 import type { BriefingContextResponse, WrittenBriefing } from "@/lib/google/types";
+import { incrementUsageCount } from "@/lib/localUsage";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = {
@@ -29,6 +30,7 @@ type SavedOutput = {
 
 const latestBriefingStorageKey = "inboxcast.latestBriefing";
 const outputsStorageKey = "inboxcast.outputs";
+const pendingConciergeCommandKey = "inboxcast.pendingConciergeCommand";
 const suggestions = [
   "What needs my attention?",
   "Draft replies for important emails",
@@ -37,7 +39,15 @@ const suggestions = [
 
 function friendlyError(message: string) {
   if (message.includes("OPENAI_API_KEY")) {
-    return "OpenAI is not configured. Add OPENAI_API_KEY to .env.local, restart the dev server, and try again.";
+    return "OpenAI is not configured. Add OPENAI_API_KEY in .env.local or Vercel environment variables, then restart or redeploy.";
+  }
+
+  if (message.toLowerCase().includes("quota") || message.toLowerCase().includes("billing")) {
+    return "OpenAI quota or billing needs attention. Check the OpenAI project billing and usage limits, then try again.";
+  }
+
+  if (message.toLowerCase().includes("rate limit")) {
+    return "OpenAI rate limit reached. Wait a moment, then try again.";
   }
 
   return message;
@@ -72,27 +82,10 @@ export function ConciergeClient() {
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(latestBriefingStorageKey);
-      if (!stored) return;
-
-      const parsed = JSON.parse(stored) as LatestBriefing;
-      const sanitizedLatest = {
-        briefing: parsed.briefing,
-        savedAt: parsed.savedAt,
-      };
-      setLatest(sanitizedLatest);
-      window.localStorage.setItem(latestBriefingStorageKey, JSON.stringify(sanitizedLatest));
-    } catch {
-      setLatest(null);
-    }
-  }, []);
-
   async function sendMessage(content: string) {
     if (!content.trim()) return;
     if (!latest) {
-      setError("Generate a briefing first so Concierge has real Gmail and Calendar context.");
+      setError("Generate a briefing first so Concierge has your latest transcript.");
       return;
     }
 
@@ -128,6 +121,7 @@ export function ConciergeClient() {
       }
 
       const assistantContent = payload.message;
+      incrementUsageCount("concierge");
       setMessages((current) => [
         ...current,
         {
@@ -148,11 +142,38 @@ export function ConciergeClient() {
     await navigator.clipboard?.writeText(content);
   }
 
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(latestBriefingStorageKey);
+      if (!stored) return;
+
+      const parsed = JSON.parse(stored) as LatestBriefing;
+      const sanitizedLatest = {
+        briefing: parsed.briefing,
+        savedAt: parsed.savedAt,
+      };
+      setLatest(sanitizedLatest);
+      window.localStorage.setItem(latestBriefingStorageKey, JSON.stringify(sanitizedLatest));
+    } catch {
+      setLatest(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!latest) return;
+
+    const pendingCommand = window.sessionStorage.getItem(pendingConciergeCommandKey);
+    if (!pendingCommand) return;
+
+    window.sessionStorage.removeItem(pendingConciergeCommandKey);
+    void sendMessage(pendingCommand);
+  }, [latest]);
+
   return (
     <section className="surface-card rounded-[2rem] p-4 sm:p-6">
       {!latest && (
         <div className="mb-5 rounded-3xl border border-ember-300/25 bg-ember-300/10 p-4 text-sm leading-6 text-ember-300">
-          Generate a briefing first so Concierge has real Gmail and Calendar context.
+          Generate a briefing first so Concierge has your latest transcript.
           <div className="mt-3">
             <Link className="secondary-button px-4 py-2 text-xs" href="/briefing">
               Go to Briefing

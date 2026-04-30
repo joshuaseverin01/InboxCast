@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { openAIProviderErrorMessage } from "@/lib/openai/errors";
 import type {
   BriefingContextResponse,
   WrittenBriefing,
@@ -10,9 +11,11 @@ import type {
 
 export const runtime = "nodejs";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
-const MAX_EMAILS = 40;
-const MAX_EVENTS = 40;
+const MODEL = process.env.OPENAI_BRIEFING_MODEL || "gpt-4o-mini";
+const MAX_EMAILS = 20;
+const MAX_EVENTS = 20;
+const MAX_EMAIL_SNIPPET_CHARS = 280;
+const MAX_CALENDAR_DESCRIPTION_CHARS = 300;
 
 type OpenAIResponse = {
   output_text?: string;
@@ -32,6 +35,11 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json(body, { status });
 }
 
+function truncateText(value: string | undefined, maxLength: number) {
+  if (!value) return value;
+  return value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}...` : value;
+}
+
 function extractOutputText(response: OpenAIResponse) {
   if (response.output_text) return response.output_text;
 
@@ -48,7 +56,7 @@ function compactContext(context: BriefingContextResponse) {
   return {
     calendar: {
       events: context.calendar.events.slice(0, MAX_EVENTS).map((event) => ({
-        descriptionSnippet: event.descriptionSnippet,
+        descriptionSnippet: truncateText(event.descriptionSnippet, MAX_CALENDAR_DESCRIPTION_CHARS),
         end: event.end,
         location: event.location,
         start: event.start,
@@ -61,7 +69,7 @@ function compactContext(context: BriefingContextResponse) {
         date: message.date,
         from: message.from,
         labels: message.labels,
-        snippet: message.snippet,
+        snippet: truncateText(message.snippet, MAX_EMAIL_SNIPPET_CHARS),
         subject: message.subject,
         timestamp: message.timestamp,
       })),
@@ -171,7 +179,11 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       return errorResponse(
-        "OpenAI could not generate the briefing. Check server OpenAI configuration and model access.",
+        openAIProviderErrorMessage(
+          response.status,
+          "OpenAI could not generate the briefing. Check server OpenAI configuration and model access.",
+          openAiPayload,
+        ),
         response.status,
       );
     }

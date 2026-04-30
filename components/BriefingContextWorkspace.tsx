@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,6 +21,9 @@ import {
   Volume2,
 } from "lucide-react";
 import { TimeRangeSelector, type TimeRangeSelectorValue } from "@/components/TimeRangeSelector";
+import { VoiceCommandButton, type VoiceCommandExecutionResult } from "@/components/VoiceCommandButton";
+import { incrementUsageCount } from "@/lib/localUsage";
+import { parseVoiceCommand } from "@/lib/voiceCommands";
 import type {
   BriefingContextErrorResponse,
   BriefingContextResponse,
@@ -42,6 +46,7 @@ type ContextError = {
 const briefingStyles: BriefingStyle[] = ["concise", "detailed", "executive", "casual podcast"];
 const latestBriefingStorageKey = "inboxcast.latestBriefing";
 const audioStateStorageKey = "inboxcast.audioState";
+const pendingConciergeCommandKey = "inboxcast.pendingConciergeCommand";
 
 type StoredBriefing = {
   briefing: WrittenBriefing;
@@ -107,7 +112,15 @@ function LoadingSkeleton() {
 
 function friendlyError(message: string) {
   if (message.includes("OPENAI_API_KEY")) {
-    return "OpenAI is not configured. Add OPENAI_API_KEY to .env.local, restart the dev server, and try again.";
+    return "OpenAI is not configured. Add OPENAI_API_KEY in .env.local or Vercel environment variables, then restart or redeploy.";
+  }
+
+  if (message.toLowerCase().includes("quota") || message.toLowerCase().includes("billing")) {
+    return "OpenAI quota or billing needs attention. Check the OpenAI project billing and usage limits, then try again.";
+  }
+
+  if (message.toLowerCase().includes("rate limit")) {
+    return "OpenAI rate limit reached. Wait a moment, then try again.";
   }
 
   if (message.toLowerCase().includes("reconnect")) {
@@ -186,12 +199,19 @@ function CalendarEventCard({ event }: { event: GoogleCalendarEvent }) {
   );
 }
 
-function AudioBriefingControls({ transcript }: { transcript: string }) {
+function AudioBriefingControls({
+  commandNonce = 0,
+  transcript,
+}: {
+  commandNonce?: number;
+  transcript: string;
+}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [pendingAutoplay, setPendingAutoplay] = useState(false);
   const [speed, setSpeed] = useState(1);
 
   useEffect(() => {
@@ -214,7 +234,33 @@ function AudioBriefingControls({ transcript }: { transcript: string }) {
     window.localStorage.setItem(audioStateStorageKey, JSON.stringify({ speed }));
   }, [speed]);
 
-  async function generateAudio() {
+  useEffect(() => {
+    if (!pendingAutoplay || !audioUrl || !audioRef.current) return;
+
+    void audioRef.current
+      .play()
+      .then(() => setIsPlaying(true))
+      .catch(() => {
+        setAudioError("Audio is ready. Tap Play if your browser blocks autoplay.");
+      })
+      .finally(() => setPendingAutoplay(false));
+  }, [audioUrl, pendingAutoplay]);
+
+  useEffect(() => {
+    if (commandNonce === 0) return;
+
+    if (audioUrl && audioRef.current) {
+      void audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setAudioError("Audio is ready. Tap Play if your browser blocks autoplay."));
+      return;
+    }
+
+    void generateAudio(true);
+  }, [commandNonce]);
+
+  async function generateAudio(autoplay = false) {
     setAudioLoading(true);
     setAudioError(null);
     setIsPlaying(false);
@@ -240,7 +286,9 @@ function AudioBriefingControls({ transcript }: { transcript: string }) {
         throw new Error(payload?.error?.message ?? "InboxCast could not generate audio.");
       }
 
+      setPendingAutoplay(autoplay);
       setAudioUrl(URL.createObjectURL(await response.blob()));
+      incrementUsageCount("tts");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "InboxCast could not generate audio.";
       setAudioError(friendlyError(message));
@@ -278,9 +326,9 @@ function AudioBriefingControls({ transcript }: { transcript: string }) {
           </div>
           <p className="mt-1 text-sm leading-6 text-mist-500">AI-generated voice. Audio is not stored.</p>
         </div>
-        <button className="secondary-button px-4 py-2" disabled={audioLoading} onClick={generateAudio} type="button">
+        <button className="secondary-button px-4 py-2" disabled={audioLoading} onClick={() => generateAudio()} type="button">
           {audioLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
-          {audioLoading ? "Generating audio" : "Generate audio"}
+          {audioLoading ? "Generating audio" : audioUrl ? "Regenerate audio" : "Generate audio"}
         </button>
       </div>
 
@@ -326,7 +374,13 @@ function AudioBriefingControls({ transcript }: { transcript: string }) {
   );
 }
 
-function WrittenBriefingPanel({ briefing }: { briefing: WrittenBriefing }) {
+function WrittenBriefingPanel({
+  audioCommandNonce = 0,
+  briefing,
+}: {
+  audioCommandNonce?: number;
+  briefing: WrittenBriefing;
+}) {
   const [copied, setCopied] = useState(false);
   const sections = [
     ["Priority emails", briefing.priorityEmails],
@@ -383,7 +437,7 @@ function WrittenBriefingPanel({ briefing }: { briefing: WrittenBriefing }) {
         <p className="mt-3 whitespace-pre-line text-sm leading-7 text-mist-300">{briefing.fullTranscript}</p>
       </div>
 
-      <AudioBriefingControls transcript={briefing.fullTranscript} />
+      <AudioBriefingControls commandNonce={audioCommandNonce} transcript={briefing.fullTranscript} />
     </section>
   );
 }
@@ -393,6 +447,7 @@ export function BriefingContextWorkspace({
 }: {
   title?: string;
 }) {
+  const router = useRouter();
   const [status, setStatus] = useState<FetchStatus>("idle");
   const [result, setResult] = useState<BriefingContextResponse | null>(null);
   const [error, setError] = useState<ContextError | null>(null);
@@ -400,6 +455,8 @@ export function BriefingContextWorkspace({
   const [briefing, setBriefing] = useState<WrittenBriefing | null>(null);
   const [briefingError, setBriefingError] = useState<string | null>(null);
   const [briefingStyle, setBriefingStyle] = useState<BriefingStyle>("concise");
+  const [commandRange, setCommandRange] = useState<TimeRangeSelectorValue | null>(null);
+  const [audioCommandNonce, setAudioCommandNonce] = useState(0);
   const [restoredAt, setRestoredAt] = useState<string | null>(null);
   const metrics = useMemo(() => metricCards(result), [result]);
 
@@ -426,13 +483,16 @@ export function BriefingContextWorkspace({
     }
   }, []);
 
-  async function fetchContext(value: TimeRangeSelectorValue) {
+  async function fetchContext(value: TimeRangeSelectorValue): Promise<BriefingContextResponse | null> {
+    setCommandRange(value);
     setStatus("loading");
+    setResult(null);
     setError(null);
     setBriefing(null);
     setBriefingError(null);
     setBriefingStatus("idle");
     setRestoredAt(null);
+    window.localStorage.removeItem(latestBriefingStorageKey);
 
     try {
       const response = await fetch("/api/google/briefing-context", {
@@ -455,6 +515,7 @@ export function BriefingContextWorkspace({
 
       setResult(payload);
       setStatus("success");
+      return payload;
     } catch (caught) {
       const nextError =
         caught && typeof caught === "object" && "message" in caught
@@ -462,11 +523,12 @@ export function BriefingContextWorkspace({
           : { message: "InboxCast could not fetch Google context." };
       setError({ ...nextError, message: friendlyError(nextError.message) });
       setStatus("error");
+      return null;
     }
   }
 
-  async function generateBriefing() {
-    if (!result) return;
+  async function generateBriefing(context = result): Promise<WrittenBriefing | null> {
+    if (!context) return null;
 
     setBriefingStatus("loading");
     setBriefing(null);
@@ -475,7 +537,7 @@ export function BriefingContextWorkspace({
     try {
       const response = await fetch("/api/briefing/generate", {
         body: JSON.stringify({
-          context: result,
+          context,
           style: briefingStyle,
         }),
         headers: {
@@ -491,6 +553,7 @@ export function BriefingContextWorkspace({
       }
 
       setBriefing(payload.briefing);
+      incrementUsageCount("briefing");
       // Persist only generated briefing output for convenience. Raw Google metadata
       // stays in React state for the current page session and OAuth tokens are never stored here.
       window.localStorage.setItem(
@@ -502,12 +565,99 @@ export function BriefingContextWorkspace({
       );
       setRestoredAt(new Date().toISOString());
       setBriefingStatus("success");
+      return payload.briefing;
     } catch (caught) {
       setBriefing(null);
       const message = caught instanceof Error ? caught.message : "InboxCast could not generate the briefing.";
       setBriefingError(friendlyError(message));
       setBriefingStatus("error");
+      return null;
     }
+  }
+
+  async function handleVoiceCommand(command: string): Promise<VoiceCommandExecutionResult> {
+    const parsed = parseVoiceCommand(command);
+
+    if (parsed.kind === "generate_briefing") {
+      setCommandRange(parsed.range);
+      const nextContext = await fetchContext(parsed.range);
+
+      if (!nextContext) {
+        return {
+          action: "Could not fetch email context. Check the message above, then try again.",
+          heard: command,
+          intent: parsed.intent,
+          range: parsed.rangeLabel,
+          status: "error",
+        };
+      }
+
+      const nextBriefing = await generateBriefing(nextContext);
+
+      return {
+        action: nextBriefing ? "Fetched context and generated a written briefing." : "Fetched context, but briefing generation failed.",
+        heard: command,
+        intent: parsed.intent,
+        range: parsed.rangeLabel,
+        status: nextBriefing ? "success" : "error",
+      };
+    }
+
+    if (parsed.kind === "audio") {
+      if (!briefing) {
+        return {
+          action: "Generate a briefing first, then I can read it out loud.",
+          heard: command,
+          intent: parsed.intent,
+          status: "error",
+        };
+      }
+
+      setAudioCommandNonce((current) => current + 1);
+      return {
+        action: "Generating or playing the briefing audio.",
+        heard: command,
+        intent: parsed.intent,
+        status: "success",
+      };
+    }
+
+    if (parsed.kind === "concierge") {
+      if (!briefing) {
+        return {
+          action: "Generate a briefing first so Concierge has your latest transcript.",
+          heard: command,
+          intent: parsed.intent,
+          status: "error",
+        };
+      }
+
+      window.sessionStorage.setItem(pendingConciergeCommandKey, parsed.prompt);
+      router.push("/concierge");
+      return {
+        action: "Opening Concierge with your question.",
+        heard: command,
+        intent: parsed.intent,
+        status: "success",
+      };
+    }
+
+    if (parsed.kind === "navigate") {
+      router.push(parsed.href);
+      return {
+        action: `Opening ${parsed.pageLabel}.`,
+        heard: command,
+        intent: parsed.intent,
+        status: "success",
+      };
+    }
+
+    return {
+      action: parsed.message,
+      heard: command,
+      intent: parsed.intent,
+      status: "error",
+    };
   }
 
   function clearCurrentBriefing() {
@@ -554,7 +704,17 @@ export function BriefingContextWorkspace({
         </div>
       )}
 
-      <TimeRangeSelector loading={status === "loading"} onCreate={fetchContext} submitLabel="Fetch Google context" />
+      <VoiceCommandButton
+        disabled={status === "loading" || briefingStatus === "loading"}
+        onCommand={handleVoiceCommand}
+      />
+
+      <TimeRangeSelector
+        loading={status === "loading"}
+        onCreate={fetchContext}
+        submitLabel="Fetch Google context"
+        value={commandRange}
+      />
 
       {error && (
         <div className="surface-card rounded-[1.75rem] border-ember-300/25 p-5">
@@ -605,7 +765,7 @@ export function BriefingContextWorkspace({
                 <button
                   className="primary-button"
                   disabled={briefingStatus === "loading"}
-                  onClick={generateBriefing}
+                  onClick={() => generateBriefing()}
                   type="button"
                 >
                   {briefingStatus === "loading" ? (
@@ -633,7 +793,13 @@ export function BriefingContextWorkspace({
             )}
           </section>
 
-          {briefing && <WrittenBriefingPanel briefing={briefing} />}
+          {briefing && (
+            <WrittenBriefingPanel
+              audioCommandNonce={audioCommandNonce}
+              briefing={briefing}
+              key={briefing.fullTranscript}
+            />
+          )}
 
           <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
             <section className="space-y-4">
