@@ -9,7 +9,7 @@ function messageCopy(message: ConnectionMessage) {
   if (message === "success") {
     return {
       tone: "success",
-      text: "Google account connected. Gmail metadata and Calendar read-only scopes are ready for future briefing generation.",
+      text: "Google account connected. Gmail metadata, Gmail draft creation, and Calendar read-only scopes are ready.",
     };
   }
 
@@ -105,9 +105,11 @@ export function GoogleConnectionPanel({
             </div>
           </div>
           <div className="mt-4 rounded-2xl border border-white/10 bg-ink-950/[0.48] p-3 text-sm leading-6 text-mist-300">
-            {connection.gmailConnected
-              ? "Connected with metadata-only access. No send, modify, body, or attachment scope."
-              : "Waiting for Gmail metadata permission."}
+            {connection.gmailConnected && connection.gmailDraftConnected
+              ? "Connected with metadata access and user-approved draft creation. No send, modify, body, or attachment scope."
+              : connection.gmailConnected
+                ? "Metadata access is connected. Reconnect to approve Gmail draft creation."
+                : "Waiting for Gmail metadata and draft permissions."}
           </div>
         </article>
 

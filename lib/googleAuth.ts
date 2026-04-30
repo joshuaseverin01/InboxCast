@@ -5,6 +5,7 @@ export const GOOGLE_OAUTH_SCOPES = {
   email: "email",
   profile: "profile",
   gmailMetadata: "https://www.googleapis.com/auth/gmail.metadata",
+  gmailCompose: "https://www.googleapis.com/auth/gmail.compose",
   calendarEventsReadonly: "https://www.googleapis.com/auth/calendar.events.readonly",
 } as const;
 
@@ -13,6 +14,7 @@ export const GOOGLE_REQUIRED_SCOPES = [
   GOOGLE_OAUTH_SCOPES.email,
   GOOGLE_OAUTH_SCOPES.profile,
   GOOGLE_OAUTH_SCOPES.gmailMetadata,
+  GOOGLE_OAUTH_SCOPES.gmailCompose,
   GOOGLE_OAUTH_SCOPES.calendarEventsReadonly,
 ] as const;
 
@@ -21,6 +23,11 @@ export const GOOGLE_SCOPE_DESCRIPTIONS = [
     scope: GOOGLE_OAUTH_SCOPES.gmailMetadata,
     label: "Gmail metadata",
     description: "Read message IDs, labels, thread IDs, and headers only. No email bodies or attachments.",
+  },
+  {
+    scope: GOOGLE_OAUTH_SCOPES.gmailCompose,
+    label: "Gmail draft creation",
+    description: "Create user-approved Gmail drafts only. InboxCast cannot send emails.",
   },
   {
     scope: GOOGLE_OAUTH_SCOPES.calendarEventsReadonly,
@@ -33,6 +40,7 @@ export type GoogleConnectionState = {
   connected: boolean;
   hasAllRequiredScopes: boolean;
   gmailConnected: boolean;
+  gmailDraftConnected: boolean;
   calendarConnected: boolean;
   email: string | null;
   name: string | null;
@@ -58,12 +66,14 @@ export function getGoogleConnectionState(session: Session | null): GoogleConnect
   const granted = parseGrantedScopes(session?.google?.grantedScopes);
   const missingScopes = GOOGLE_REQUIRED_SCOPES.filter((scope) => !granted.has(scope));
   const gmailConnected = granted.has(GOOGLE_OAUTH_SCOPES.gmailMetadata);
+  const gmailDraftConnected = granted.has(GOOGLE_OAUTH_SCOPES.gmailCompose);
   const calendarConnected = granted.has(GOOGLE_OAUTH_SCOPES.calendarEventsReadonly);
 
   return {
     connected: Boolean(session?.google?.connected),
     hasAllRequiredScopes: Boolean(session?.google?.connected) && missingScopes.length === 0,
     gmailConnected,
+    gmailDraftConnected,
     calendarConnected,
     email: session?.user?.email ?? null,
     name: session?.user?.name ?? null,

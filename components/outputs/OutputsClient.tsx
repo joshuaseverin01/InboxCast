@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Copy, Download, FileText, Loader2, Trash2 } from "lucide-react";
+import { Copy, Download, FileText, Loader2, MailPlus, Trash2, X } from "lucide-react";
 
 type SavedOutput = {
   id: string;
@@ -13,6 +13,19 @@ type SavedOutput = {
 };
 
 type ExportStatus = {
+  state: "loading" | "success" | "error";
+  message: string;
+};
+
+type DraftFormState = {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+};
+
+type DraftStatus = {
   state: "loading" | "success" | "error";
   message: string;
 };
@@ -146,6 +159,9 @@ export function OutputsClient() {
   const [outputs, setOutputs] = useState<SavedOutput[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<Record<string, ExportStatus>>({});
+  const [draftForms, setDraftForms] = useState<Record<string, DraftFormState>>({});
+  const [draftStatus, setDraftStatus] = useState<Record<string, DraftStatus>>({});
+  const [openDraftId, setOpenDraftId] = useState<string | null>(null);
 
   useEffect(() => {
     setOutputs(readOutputs());
@@ -192,6 +208,94 @@ export function OutputsClient() {
         ...current,
         [output.id]: {
           message: "PDF export failed. Try again or copy the output instead.",
+          state: "error",
+        },
+      }));
+    }
+  }
+
+  function openDraftForm(output: SavedOutput) {
+    setOpenDraftId((current) => (current === output.id ? null : output.id));
+    setDraftForms((current) => ({
+      ...current,
+      [output.id]: current[output.id] ?? {
+        bcc: "",
+        body: output.content,
+        cc: "",
+        subject: output.title,
+        to: "",
+      },
+    }));
+  }
+
+  function updateDraftForm(id: string, field: keyof DraftFormState, value: string) {
+    setDraftForms((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? { bcc: "", body: "", cc: "", subject: "", to: "" }),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function createGmailDraft(output: SavedOutput) {
+    const form = draftForms[output.id];
+
+    if (!form?.to.trim()) {
+      setDraftStatus((current) => ({
+        ...current,
+        [output.id]: { message: "Add at least one recipient before creating a Gmail draft.", state: "error" },
+      }));
+      return;
+    }
+
+    if (!form.subject.trim()) {
+      setDraftStatus((current) => ({
+        ...current,
+        [output.id]: { message: "Add a subject before creating a Gmail draft.", state: "error" },
+      }));
+      return;
+    }
+
+    if (!form.body.trim()) {
+      setDraftStatus((current) => ({
+        ...current,
+        [output.id]: { message: "Add a body before creating a Gmail draft.", state: "error" },
+      }));
+      return;
+    }
+
+    setDraftStatus((current) => ({
+      ...current,
+      [output.id]: { message: "Creating Gmail draft", state: "loading" },
+    }));
+
+    try {
+      const response = await fetch("/api/google/drafts/create", {
+        body: JSON.stringify(form),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "Gmail API could not create the draft. Try again from Outputs.");
+      }
+
+      setDraftStatus((current) => ({
+        ...current,
+        [output.id]: {
+          message: "Draft created in Gmail. Review it in Gmail before sending.",
+          state: "success",
+        },
+      }));
+    } catch (error) {
+      setDraftStatus((current) => ({
+        ...current,
+        [output.id]: {
+          message: error instanceof Error ? error.message : "Gmail draft creation failed.",
           state: "error",
         },
       }));
@@ -253,6 +357,10 @@ export function OutputsClient() {
               )}
               {exportStatus[output.id]?.state === "loading" ? "Exporting" : "Export PDF"}
             </button>
+            <button className="secondary-button px-4 py-2" onClick={() => openDraftForm(output)} type="button">
+              <MailPlus className="h-4 w-4" />
+              Create Gmail draft
+            </button>
             <button
               className="secondary-button px-4 py-2 text-mist-300 hover:text-ember-300"
               onClick={() => deleteOutput(output.id)}
@@ -273,6 +381,114 @@ export function OutputsClient() {
               ].join(" ")}
             >
               {exportStatus[output.id].message}
+            </div>
+          )}
+
+          {openDraftId === output.id && (
+            <div className="mt-4 rounded-3xl border border-white/10 bg-ink-950/[0.42] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-mist-50">Create Gmail draft</p>
+                  <p className="mt-1 text-sm leading-6 text-mist-500">
+                    InboxCast only creates a draft. It will not send email.
+                  </p>
+                </div>
+                <button
+                  aria-label="Close Gmail draft form"
+                  className="secondary-button h-9 w-9 px-0"
+                  onClick={() => setOpenDraftId(null)}
+                  type="button"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <label className="text-sm font-medium text-mist-300">
+                  To
+                  <input
+                    className="field mt-2"
+                    onChange={(event) => updateDraftForm(output.id, "to", event.target.value)}
+                    placeholder="name@example.com"
+                    type="email"
+                    value={draftForms[output.id]?.to ?? ""}
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-mist-300">
+                    Cc
+                    <input
+                      className="field mt-2"
+                      onChange={(event) => updateDraftForm(output.id, "cc", event.target.value)}
+                      placeholder="Optional"
+                      type="text"
+                      value={draftForms[output.id]?.cc ?? ""}
+                    />
+                  </label>
+                  <label className="text-sm font-medium text-mist-300">
+                    Bcc
+                    <input
+                      className="field mt-2"
+                      onChange={(event) => updateDraftForm(output.id, "bcc", event.target.value)}
+                      placeholder="Optional"
+                      type="text"
+                      value={draftForms[output.id]?.bcc ?? ""}
+                    />
+                  </label>
+                </div>
+
+                <label className="text-sm font-medium text-mist-300">
+                  Subject
+                  <input
+                    className="field mt-2"
+                    onChange={(event) => updateDraftForm(output.id, "subject", event.target.value)}
+                    placeholder="Draft subject"
+                    type="text"
+                    value={draftForms[output.id]?.subject ?? ""}
+                  />
+                </label>
+
+                <label className="text-sm font-medium text-mist-300">
+                  Body
+                  <textarea
+                    className="field mt-2 min-h-40 resize-y leading-6"
+                    onChange={(event) => updateDraftForm(output.id, "body", event.target.value)}
+                    value={draftForms[output.id]?.body ?? ""}
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  className="primary-button px-4 py-2"
+                  disabled={draftStatus[output.id]?.state === "loading"}
+                  onClick={() => createGmailDraft(output)}
+                  type="button"
+                >
+                  {draftStatus[output.id]?.state === "loading" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <MailPlus className="h-4 w-4" />
+                  )}
+                  {draftStatus[output.id]?.state === "loading" ? "Creating draft" : "Create draft in Gmail"}
+                </button>
+              </div>
+
+              {draftStatus[output.id] && (
+                <div
+                  className={[
+                    "mt-3 rounded-2xl border p-3 text-sm leading-6",
+                    draftStatus[output.id].state === "success"
+                      ? "border-teal-300/25 bg-teal-300/10 text-teal-100"
+                      : draftStatus[output.id].state === "error"
+                        ? "border-ember-300/25 bg-ember-300/10 text-ember-300"
+                        : "border-white/10 bg-white/[0.04] text-mist-300",
+                  ].join(" ")}
+                >
+                  {draftStatus[output.id].message}
+                </div>
+              )}
             </div>
           )}
         </article>
