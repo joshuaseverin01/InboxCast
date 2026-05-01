@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { AppShell } from "@/components/AppShell";
 import { DeleteLocalDataButton } from "@/components/DeleteLocalDataButton";
 import { GoogleConnectionPanel } from "@/components/GoogleConnectionPanel";
+import { MorningBriefingSettings } from "@/components/MorningBriefingSettings";
 import { PrivatePrototypeNotice } from "@/components/PrivatePrototypeNotice";
 import { UsageSummaryPanel } from "@/components/UsageSummaryPanel";
 import { getGoogleConnectionState } from "@/lib/googleAuth";
@@ -47,6 +48,8 @@ export default async function SettingsPage({
         <GoogleConnectionPanel connection={googleConnection} message={connectionMessage} />
 
         <UsageSummaryPanel />
+
+        <MorningBriefingSettings />
 
         <section className="grid gap-6 lg:grid-cols-2">
           <article className="surface-card rounded-[2rem] p-5 sm:p-6">
@@ -106,7 +109,7 @@ export default async function SettingsPage({
           </div>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-mist-500">
             InboxCast uses a secure Auth.js session cookie. It does not send email, does not ask for Gmail send or
-            modify permissions, and does not fetch full email bodies.
+            modify permissions, and only reads full email bodies after you explicitly select messages.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <a

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlarmClock,
   AlertTriangle,
   CalendarClock,
   CalendarDays,
@@ -23,6 +24,11 @@ import {
 import { TimeRangeSelector, type TimeRangeSelectorValue } from "@/components/TimeRangeSelector";
 import { VoiceCommandButton, type VoiceCommandExecutionResult } from "@/components/VoiceCommandButton";
 import { incrementUsageCount } from "@/lib/localUsage";
+import {
+  buildMorningBriefingRequest,
+  morningBriefingLastRunStorageKey,
+  readMorningBriefingPreset,
+} from "@/lib/morningBriefing";
 import { parseVoiceCommand } from "@/lib/voiceCommands";
 import type {
   BriefingContextErrorResponse,
@@ -37,6 +43,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 type FetchStatus = "idle" | "loading" | "success" | "error";
+type MorningStatus = "idle" | "fetching" | "generating" | "audio" | "ready" | "error";
 
 type ContextError = {
   message: string;
@@ -443,8 +450,10 @@ function WrittenBriefingPanel({
 }
 
 export function BriefingContextWorkspace({
+  showMorningBriefingAction = false,
   title = "Briefing preparation",
 }: {
+  showMorningBriefingAction?: boolean;
   title?: string;
 }) {
   const router = useRouter();
@@ -458,7 +467,11 @@ export function BriefingContextWorkspace({
   const [commandRange, setCommandRange] = useState<TimeRangeSelectorValue | null>(null);
   const [audioCommandNonce, setAudioCommandNonce] = useState(0);
   const [restoredAt, setRestoredAt] = useState<string | null>(null);
+  const [morningStatus, setMorningStatus] = useState<MorningStatus>("idle");
+  const [morningMessage, setMorningMessage] = useState<string | null>(null);
   const metrics = useMemo(() => metricCards(result), [result]);
+  const morningInProgress =
+    morningStatus === "fetching" || morningStatus === "generating" || morningStatus === "audio";
 
   useEffect(() => {
     try {
@@ -483,7 +496,14 @@ export function BriefingContextWorkspace({
     }
   }, []);
 
-  async function fetchContext(value: TimeRangeSelectorValue): Promise<BriefingContextResponse | null> {
+  async function fetchContext(
+    value: TimeRangeSelectorValue,
+    options?: { preserveMorningStatus?: boolean },
+  ): Promise<BriefingContextResponse | null> {
+    if (!options?.preserveMorningStatus) {
+      setMorningStatus("idle");
+      setMorningMessage(null);
+    }
     setCommandRange(value);
     setStatus("loading");
     setResult(null);
@@ -527,7 +547,7 @@ export function BriefingContextWorkspace({
     }
   }
 
-  async function generateBriefing(context = result): Promise<WrittenBriefing | null> {
+  async function generateBriefing(context = result, style = briefingStyle): Promise<WrittenBriefing | null> {
     if (!context) return null;
 
     setBriefingStatus("loading");
@@ -538,7 +558,7 @@ export function BriefingContextWorkspace({
       const response = await fetch("/api/briefing/generate", {
         body: JSON.stringify({
           context,
-          style: briefingStyle,
+          style,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -554,16 +574,18 @@ export function BriefingContextWorkspace({
 
       setBriefing(payload.briefing);
       incrementUsageCount("briefing");
+      const savedAt = new Date().toISOString();
       // Persist only generated briefing output for convenience. Raw Google metadata
       // stays in React state for the current page session and OAuth tokens are never stored here.
       window.localStorage.setItem(
         latestBriefingStorageKey,
         JSON.stringify({
           briefing: payload.briefing,
-          savedAt: new Date().toISOString(),
+          savedAt,
         }),
       );
-      setRestoredAt(new Date().toISOString());
+      window.localStorage.setItem(morningBriefingLastRunStorageKey, savedAt);
+      setRestoredAt(savedAt);
       setBriefingStatus("success");
       return payload.briefing;
     } catch (caught) {
@@ -575,8 +597,92 @@ export function BriefingContextWorkspace({
     }
   }
 
+  async function startMorningBriefing(command?: string): Promise<VoiceCommandExecutionResult> {
+    const preset = readMorningBriefingPreset();
+    const { rangeLabel, request, usedFallback } = buildMorningBriefingRequest(
+      preset,
+      window.localStorage.getItem(morningBriefingLastRunStorageKey),
+    );
+
+    setBriefingStyle(preset.briefingStyle);
+    setMorningStatus("fetching");
+    setMorningMessage(`Fetching email context for ${rangeLabel.toLowerCase()}...`);
+    setCommandRange(request);
+
+    const nextContext = await fetchContext(request, { preserveMorningStatus: true });
+
+    if (!nextContext) {
+      setMorningStatus("error");
+      setMorningMessage("Could not fetch email context. Check the message below, then try again.");
+      return {
+        action: "Could not fetch email context. Check the message below, then try again.",
+        heard: command ?? "Start morning briefing",
+        intent: "Generate briefing",
+        range: rangeLabel,
+        status: "error",
+      };
+    }
+
+    const emptyPresetRange = nextContext.summary.emailCount === 0 && nextContext.summary.calendarEventCount === 0;
+    setMorningStatus("generating");
+    setMorningMessage(
+      emptyPresetRange
+        ? "Nothing major found for this preset range. Generating a calm empty briefing..."
+        : "Generating briefing...",
+    );
+
+    const nextBriefing = await generateBriefing(nextContext, preset.briefingStyle);
+
+    if (!nextBriefing) {
+      setMorningStatus("error");
+      setMorningMessage("Fetched context, but briefing generation failed.");
+      return {
+        action: "Fetched context, but briefing generation failed.",
+        heard: command ?? "Start morning briefing",
+        intent: "Generate briefing",
+        range: rangeLabel,
+        status: "error",
+      };
+    }
+
+    if (preset.generateAudioAfterBriefing) {
+      setMorningStatus("audio");
+      setMorningMessage("Preparing audio. This uses additional AI audio credits.");
+      setAudioCommandNonce((current) => current + 1);
+    }
+
+    window.setTimeout(() => {
+      setMorningStatus("ready");
+      setMorningMessage(
+        emptyPresetRange
+          ? "Nothing major found for this preset range."
+          : preset.generateAudioAfterBriefing
+            ? "Ready to play."
+            : "Ready to play. Generate audio below when you want to use audio credits.",
+      );
+    }, preset.generateAudioAfterBriefing ? 500 : 0);
+
+    return {
+      action: [
+        emptyPresetRange ? "Nothing major found for this preset range." : "Fetched context and generated your morning briefing.",
+        preset.generateAudioAfterBriefing ? "Audio is preparing." : "Audio was not generated automatically.",
+        usedFallback ? "Since last briefing fell back to last 24 hours." : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      heard: command ?? "Start morning briefing",
+      intent: "Generate briefing",
+      range: rangeLabel,
+      status: "success",
+    };
+  }
+
   async function handleVoiceCommand(command: string): Promise<VoiceCommandExecutionResult> {
     const parsed = parseVoiceCommand(command);
+
+    if (parsed.kind === "morning_briefing") {
+      return startMorningBriefing(command);
+    }
 
     if (parsed.kind === "generate_briefing") {
       setCommandRange(parsed.range);
@@ -668,11 +774,56 @@ export function BriefingContextWorkspace({
     setBriefingStatus("idle");
     setStatus("idle");
     setRestoredAt(null);
+    setMorningStatus("idle");
+    setMorningMessage(null);
     window.localStorage.removeItem(latestBriefingStorageKey);
   }
 
   return (
     <section className="space-y-6">
+      {showMorningBriefingAction && (
+        <div className="surface-card rounded-[2rem] p-5 sm:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-teal-300">
+                <AlarmClock className="h-4 w-4" />
+                One-tap preset
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold text-mist-50">Start morning briefing</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-mist-500">
+                Uses your saved Settings preset to fetch Google context and generate a written briefing.
+              </p>
+            </div>
+            <button
+              className="primary-button shrink-0 px-5 py-3"
+              disabled={morningInProgress || status === "loading" || briefingStatus === "loading"}
+              onClick={() => {
+                void startMorningBriefing();
+              }}
+              type="button"
+            >
+              {morningInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
+              {morningInProgress ? "Starting briefing" : "Start morning briefing"}
+            </button>
+          </div>
+
+          {morningMessage && (
+            <div
+              className={cn(
+                "mt-4 rounded-3xl border p-4 text-sm leading-6",
+                morningStatus === "error"
+                  ? "border-ember-300/25 bg-ember-300/10 text-ember-300"
+                  : morningStatus === "ready"
+                    ? "border-teal-300/25 bg-teal-300/10 text-teal-100"
+                    : "border-white/10 bg-white/[0.045] text-mist-300",
+              )}
+            >
+              {morningMessage}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((metric) => {
           const Icon = metric.icon;
@@ -705,7 +856,7 @@ export function BriefingContextWorkspace({
       )}
 
       <VoiceCommandButton
-        disabled={status === "loading" || briefingStatus === "loading"}
+        disabled={morningInProgress || status === "loading" || briefingStatus === "loading"}
         onCommand={handleVoiceCommand}
       />
 

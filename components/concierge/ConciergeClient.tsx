@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Copy, Loader2, MailOpen, Save, SendHorizonal, Sparkles, Trash2, UserRound } from "lucide-react";
+import { Copy, Loader2, MailOpen, MailPlus, Save, SendHorizonal, Sparkles, Trash2, UserRound } from "lucide-react";
 import type {
   BriefingContextErrorResponse,
   BriefingContextRequest,
@@ -28,7 +28,7 @@ type LatestBriefing = {
 
 type SavedOutput = {
   id: string;
-  type: "Concierge response";
+  type: string;
   title: string;
   linkedEmail: string;
   createdDate: string;
@@ -78,6 +78,19 @@ type ReadMessagesResponse = {
   error?: {
     message?: string;
   };
+};
+
+type ReplyDraftState = {
+  email: GmailFullMessageContent;
+  instruction: string;
+  replyBody: string;
+  status: FullReadStatus | null;
+  showDraftConfirm: boolean;
+  draftTo: string;
+  draftSubject: string;
+  draftStatus: FullReadStatus | null;
+  copied: boolean;
+  saved: boolean;
 };
 
 const MAX_SELECTED_EMAILS = 3;
@@ -317,6 +330,18 @@ function compactEmailPreview(email: GmailMetadataMessage) {
   return email.snippet || "No snippet was returned for this message.";
 }
 
+function extractEmailAddress(from: string) {
+  const bracketed = from.match(/<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>/);
+  if (bracketed?.[1]) return bracketed[1];
+
+  return from.match(/[^\s<>,;]+@[^\s<>,;]+\.[^\s<>,;]+/)?.[0] ?? "";
+}
+
+function replySubject(subject: string) {
+  const trimmed = subject.trim() || "(No subject)";
+  return /^re:/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
+}
+
 function loadOutputs() {
   try {
     return JSON.parse(window.localStorage.getItem(outputsStorageKey) ?? "[]") as SavedOutput[];
@@ -325,15 +350,22 @@ function loadOutputs() {
   }
 }
 
-function saveOutput(content: string) {
+function saveOutput(
+  content: string,
+  options?: {
+    linkedEmail?: string;
+    title?: string;
+    type?: string;
+  },
+) {
   const outputs = loadOutputs();
   const nextOutput: SavedOutput = {
     content,
     createdDate: new Date().toLocaleString(),
     id: crypto.randomUUID(),
-    linkedEmail: "Latest briefing",
-    title: content.split("\n")[0]?.slice(0, 72) || "Concierge response",
-    type: "Concierge response",
+    linkedEmail: options?.linkedEmail ?? "Latest briefing",
+    title: options?.title ?? content.split("\n")[0]?.slice(0, 72) ?? "Concierge response",
+    type: options?.type ?? "Concierge response",
   };
   window.localStorage.setItem(outputsStorageKey, JSON.stringify([nextOutput, ...outputs]));
 }
@@ -345,6 +377,7 @@ export function ConciergeClient() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [fullMessages, setFullMessages] = useState<GmailFullMessageContent[]>([]);
   const [fullReadStatus, setFullReadStatus] = useState<FullReadStatus | null>(null);
+  const [replyDraft, setReplyDraft] = useState<ReplyDraftState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -387,6 +420,7 @@ export function ConciergeClient() {
     setSelectedMessageIds([]);
     setFullMessages([]);
     setFullReadStatus(null);
+    setReplyDraft(null);
   }
 
   async function readSelectedEmails(messageIds: string[]) {
@@ -446,6 +480,172 @@ export function ConciergeClient() {
     }
   }
 
+  function startReplyDraft(email: GmailFullMessageContent) {
+    setReplyDraft({
+      copied: false,
+      draftStatus: null,
+      draftSubject: replySubject(email.subject),
+      draftTo: extractEmailAddress(email.from),
+      email,
+      instruction: "",
+      replyBody: "",
+      saved: false,
+      showDraftConfirm: false,
+      status: null,
+    });
+  }
+
+  async function generateReplyDraft() {
+    if (!replyDraft) {
+      setError("Read a full email before drafting a reply.");
+      return;
+    }
+
+    setReplyDraft((current) =>
+      current
+        ? {
+            ...current,
+            copied: false,
+            draftStatus: null,
+            replyBody: "",
+            saved: false,
+            showDraftConfirm: false,
+            status: { message: "Drafting reply...", state: "loading" },
+          }
+        : current,
+    );
+    setError(null);
+
+    try {
+      const instruction = replyDraft.instruction.trim() || "Keep it concise, professional, and natural.";
+      const response = await fetch("/api/concierge/chat", {
+        body: JSON.stringify({
+          fullMessages: [replyDraft.email],
+          messages: [
+            {
+              content: [
+                "Draft a reply to the selected full-read email.",
+                `User instruction: ${instruction}`,
+                "Use only the selected email content and this instruction. Do not invent facts.",
+                "Return only the reply body.",
+              ].join("\n"),
+              role: "user",
+            },
+          ],
+          task: "reply_draft",
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string; error?: { message?: string } } | null;
+
+      if (!response.ok || !payload?.message) {
+        throw new Error(payload?.error?.message ?? "Concierge could not generate a reply draft.");
+      }
+
+      const replyBody = payload.message.trim();
+      incrementUsageCount("concierge");
+      setReplyDraft((current) =>
+        current
+          ? {
+              ...current,
+              replyBody,
+              status: { message: "Reply draft ready. Review and edit before creating a Gmail draft.", state: "success" },
+            }
+          : current,
+      );
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Concierge could not generate a reply draft.";
+      setReplyDraft((current) =>
+        current ? { ...current, status: { message: friendlyError(message), state: "error" } } : current,
+      );
+    }
+  }
+
+  async function copyReplyDraft() {
+    if (!replyDraft?.replyBody.trim()) return;
+    await navigator.clipboard?.writeText(replyDraft.replyBody);
+    setReplyDraft((current) => (current ? { ...current, copied: true } : current));
+    window.setTimeout(() => {
+      setReplyDraft((current) => (current ? { ...current, copied: false } : current));
+    }, 1200);
+  }
+
+  function saveReplyDraftToOutputs() {
+    if (!replyDraft?.replyBody.trim()) return;
+
+    saveOutput(replyDraft.replyBody, {
+      linkedEmail: `${replyDraft.email.from} - ${replyDraft.email.subject}`,
+      title: `Reply draft: ${replyDraft.email.subject}`.slice(0, 90),
+      type: "Draft reply",
+    });
+    setReplyDraft((current) => (current ? { ...current, saved: true } : current));
+  }
+
+  async function createGmailDraftFromReply() {
+    if (!replyDraft) return;
+
+    if (!replyDraft.draftTo.trim()) {
+      setReplyDraft((current) =>
+        current ? { ...current, draftStatus: { message: "Add a recipient before creating a Gmail draft.", state: "error" } } : current,
+      );
+      return;
+    }
+
+    if (!replyDraft.draftSubject.trim()) {
+      setReplyDraft((current) =>
+        current ? { ...current, draftStatus: { message: "Add a subject before creating a Gmail draft.", state: "error" } } : current,
+      );
+      return;
+    }
+
+    if (!replyDraft.replyBody.trim()) {
+      setReplyDraft((current) =>
+        current ? { ...current, draftStatus: { message: "Generate or write a reply before creating a Gmail draft.", state: "error" } } : current,
+      );
+      return;
+    }
+
+    setReplyDraft((current) =>
+      current ? { ...current, draftStatus: { message: "Creating Gmail draft...", state: "loading" } } : current,
+    );
+
+    try {
+      const response = await fetch("/api/google/drafts/create", {
+        body: JSON.stringify({
+          body: replyDraft.replyBody,
+          subject: replyDraft.draftSubject,
+          to: replyDraft.draftTo,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "Gmail API could not create the draft.");
+      }
+
+      setReplyDraft((current) =>
+        current
+          ? {
+              ...current,
+              draftStatus: { message: "Draft created in Gmail. Review it in Gmail before sending.", state: "success" },
+            }
+          : current,
+      );
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Gmail draft creation failed.";
+      setReplyDraft((current) =>
+        current ? { ...current, draftStatus: { message: friendlyError(message), state: "error" } } : current,
+      );
+    }
+  }
+
   async function sendMessage(content: string) {
     if (!content.trim()) return;
 
@@ -477,6 +677,7 @@ export function ConciergeClient() {
         setSelectedMessageIds([]);
         setFullMessages([]);
         setFullReadStatus(null);
+        setReplyDraft(null);
       }
 
       if (contextIntent?.kind === "simple_list" && freshContext) {
@@ -707,6 +908,19 @@ export function ConciergeClient() {
                       <MailOpen className="h-3.5 w-3.5" />
                       {fullRead ? "Full email read" : "Read full email"}
                     </button>
+                    {fullRead && (
+                      <button
+                        className="secondary-button px-3 py-2 text-xs"
+                        onClick={() => {
+                          const fullEmail = fullMessages.find((message) => message.id === email.id);
+                          if (fullEmail) startReplyDraft(fullEmail);
+                        }}
+                        type="button"
+                      >
+                        <MailPlus className="h-3.5 w-3.5" />
+                        Draft reply
+                      </button>
+                    )}
                   </div>
                   <div className="mt-3 min-w-0">
                     <p className="truncate text-sm font-semibold text-mist-50">{email.from}</p>
@@ -737,6 +951,177 @@ export function ConciergeClient() {
             >
               {fullReadStatus.message}
             </div>
+          )}
+        </div>
+      )}
+
+      {replyDraft && (
+        <div className="mt-5 rounded-3xl border border-teal-300/20 bg-teal-300/[0.06] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-mist-50">Draft reply</p>
+              <p className="mt-1 text-sm leading-6 text-mist-500">
+                Using the full-read email from {replyDraft.email.from}: {replyDraft.email.subject}
+              </p>
+            </div>
+            <button className="secondary-button px-3 py-2 text-xs" onClick={() => setReplyDraft(null)} type="button">
+              Close
+            </button>
+          </div>
+
+          <label className="mt-4 block text-sm font-medium text-mist-300">
+            Optional drafting instructions
+            <input
+              className="field mt-2"
+              onChange={(event) =>
+                setReplyDraft((current) => (current ? { ...current, instruction: event.target.value } : current))
+              }
+              placeholder="Try: make it friendly and short"
+              type="text"
+              value={replyDraft.instruction}
+            />
+          </label>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="primary-button px-4 py-2"
+              disabled={replyDraft.status?.state === "loading"}
+              onClick={generateReplyDraft}
+              type="button"
+            >
+              {replyDraft.status?.state === "loading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              {replyDraft.replyBody ? "Regenerate reply" : "Generate reply"}
+            </button>
+          </div>
+
+          {replyDraft.status && (
+            <div
+              className={[
+                "mt-3 rounded-2xl border p-3 text-sm leading-6",
+                replyDraft.status.state === "success"
+                  ? "border-teal-300/25 bg-teal-300/10 text-teal-100"
+                  : replyDraft.status.state === "error"
+                    ? "border-ember-300/25 bg-ember-300/10 text-ember-300"
+                    : "border-white/10 bg-white/[0.04] text-mist-300",
+              ].join(" ")}
+            >
+              {replyDraft.status.message}
+            </div>
+          )}
+
+          {replyDraft.replyBody && (
+            <>
+              <label className="mt-4 block text-sm font-medium text-mist-300">
+                Review and edit reply
+                <textarea
+                  className="field mt-2 min-h-44 resize-y leading-6"
+                  onChange={(event) =>
+                    setReplyDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            draftStatus: null,
+                            replyBody: event.target.value,
+                            saved: false,
+                          }
+                        : current,
+                    )
+                  }
+                  value={replyDraft.replyBody}
+                />
+              </label>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="secondary-button px-4 py-2 text-xs" onClick={saveReplyDraftToOutputs} type="button">
+                  <Save className="h-3.5 w-3.5" />
+                  {replyDraft.saved ? "Saved" : "Save to Outputs"}
+                </button>
+                <button className="secondary-button px-4 py-2 text-xs" onClick={copyReplyDraft} type="button">
+                  <Copy className="h-3.5 w-3.5" />
+                  {replyDraft.copied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  className="secondary-button px-4 py-2 text-xs"
+                  onClick={() =>
+                    setReplyDraft((current) =>
+                      current ? { ...current, draftStatus: null, showDraftConfirm: !current.showDraftConfirm } : current,
+                    )
+                  }
+                  type="button"
+                >
+                  <MailPlus className="h-3.5 w-3.5" />
+                  Create Gmail draft
+                </button>
+              </div>
+
+              {replyDraft.showDraftConfirm && (
+                <div className="mt-4 rounded-3xl border border-white/10 bg-ink-950/[0.42] p-4">
+                  <p className="text-sm font-semibold text-mist-50">Confirm Gmail draft</p>
+                  <p className="mt-1 text-sm leading-6 text-mist-500">
+                    InboxCast creates a draft only. It will not send email.
+                  </p>
+
+                  <div className="mt-4 grid gap-3">
+                    <label className="text-sm font-medium text-mist-300">
+                      To
+                      <input
+                        className="field mt-2"
+                        onChange={(event) =>
+                          setReplyDraft((current) => (current ? { ...current, draftTo: event.target.value } : current))
+                        }
+                        placeholder="name@example.com"
+                        type="email"
+                        value={replyDraft.draftTo}
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-mist-300">
+                      Subject
+                      <input
+                        className="field mt-2"
+                        onChange={(event) =>
+                          setReplyDraft((current) => (current ? { ...current, draftSubject: event.target.value } : current))
+                        }
+                        type="text"
+                        value={replyDraft.draftSubject}
+                      />
+                    </label>
+                  </div>
+
+                  <button
+                    className="primary-button mt-4 px-4 py-2"
+                    disabled={replyDraft.draftStatus?.state === "loading"}
+                    onClick={createGmailDraftFromReply}
+                    type="button"
+                  >
+                    {replyDraft.draftStatus?.state === "loading" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MailPlus className="h-4 w-4" />
+                    )}
+                    Create draft in Gmail
+                  </button>
+
+                  {replyDraft.draftStatus && (
+                    <div
+                      className={[
+                        "mt-3 rounded-2xl border p-3 text-sm leading-6",
+                        replyDraft.draftStatus.state === "success"
+                          ? "border-teal-300/25 bg-teal-300/10 text-teal-100"
+                          : replyDraft.draftStatus.state === "error"
+                            ? "border-ember-300/25 bg-ember-300/10 text-ember-300"
+                            : "border-white/10 bg-white/[0.04] text-mist-300",
+                      ].join(" ")}
+                    >
+                      {replyDraft.draftStatus.message}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

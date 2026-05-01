@@ -32,7 +32,7 @@ export default async function DashboardPage() {
             </div>
           </section>
 
-          <BriefingContextWorkspace title="Dashboard context" />
+          <BriefingContextWorkspace showMorningBriefingAction title="Dashboard context" />
 
           <PrivatePrototypeNotice />
 

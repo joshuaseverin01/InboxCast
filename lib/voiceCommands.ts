@@ -2,6 +2,10 @@ import type { BriefingContextRequest } from "@/lib/google/types";
 
 export type ParsedVoiceCommand =
   | {
+      kind: "morning_briefing";
+      intent: "Generate briefing";
+    }
+  | {
       kind: "generate_briefing";
       intent: "Generate briefing";
       range: BriefingContextRequest;
@@ -165,6 +169,13 @@ export function parseVoiceCommand(command: string): ParsedVoiceCommand {
     normalized.includes("generate audio")
   ) {
     return { intent: "Generate or play audio", kind: "audio" };
+  }
+
+  if (/\b(my )?morning briefing\b/.test(normalized)) {
+    return {
+      intent: "Generate briefing",
+      kind: "morning_briefing",
+    };
   }
 
   if (

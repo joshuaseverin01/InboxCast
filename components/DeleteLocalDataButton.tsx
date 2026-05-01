@@ -3,8 +3,16 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { usageStorageKey } from "@/lib/localUsage";
+import { morningBriefingLastRunStorageKey, morningBriefingPresetStorageKey } from "@/lib/morningBriefing";
 
-const localStorageKeys = ["inboxcast.latestBriefing", "inboxcast.outputs", "inboxcast.audioState", usageStorageKey];
+const localStorageKeys = [
+  "inboxcast.latestBriefing",
+  "inboxcast.outputs",
+  "inboxcast.audioState",
+  morningBriefingPresetStorageKey,
+  morningBriefingLastRunStorageKey,
+  usageStorageKey,
+];
 
 export function DeleteLocalDataButton() {
   const [cleared, setCleared] = useState(false);
