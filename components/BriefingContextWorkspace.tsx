@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { TimeRangeSelector, type TimeRangeSelectorValue } from "@/components/TimeRangeSelector";
 import { VoiceCommandButton, type VoiceCommandExecutionResult } from "@/components/VoiceCommandButton";
+import { briefingFocusLabel, briefingFocusOptions, defaultBriefingFocus } from "@/lib/briefingFocus";
 import { incrementUsageCount } from "@/lib/localUsage";
 import {
   buildMorningBriefingRequest,
@@ -33,6 +34,7 @@ import { parseVoiceCommand } from "@/lib/voiceCommands";
 import type {
   BriefingContextErrorResponse,
   BriefingContextResponse,
+  BriefingFocus,
   BriefingStyle,
   GmailMetadataMessage,
   GoogleCalendarEvent,
@@ -57,7 +59,9 @@ const pendingConciergeCommandKey = "inboxcast.pendingConciergeCommand";
 
 type StoredBriefing = {
   briefing: WrittenBriefing;
+  focus?: BriefingFocus;
   savedAt: string;
+  style?: BriefingStyle;
 };
 
 function formatDateTime(value: string) {
@@ -464,6 +468,7 @@ export function BriefingContextWorkspace({
   const [briefing, setBriefing] = useState<WrittenBriefing | null>(null);
   const [briefingError, setBriefingError] = useState<string | null>(null);
   const [briefingStyle, setBriefingStyle] = useState<BriefingStyle>("concise");
+  const [briefingFocus, setBriefingFocus] = useState<BriefingFocus>(defaultBriefingFocus);
   const [commandRange, setCommandRange] = useState<TimeRangeSelectorValue | null>(null);
   const [audioCommandNonce, setAudioCommandNonce] = useState(0);
   const [restoredAt, setRestoredAt] = useState<string | null>(null);
@@ -480,6 +485,8 @@ export function BriefingContextWorkspace({
 
       const parsed = JSON.parse(stored) as StoredBriefing & { context?: BriefingContextResponse };
       setBriefing(parsed.briefing);
+      if (parsed.focus) setBriefingFocus(parsed.focus);
+      if (parsed.style) setBriefingStyle(parsed.style);
       setRestoredAt(parsed.savedAt);
       setBriefingStatus("success");
       // Keep localStorage limited to generated briefing output. Older cached raw
@@ -488,7 +495,9 @@ export function BriefingContextWorkspace({
         latestBriefingStorageKey,
         JSON.stringify({
           briefing: parsed.briefing,
+          focus: parsed.focus,
           savedAt: parsed.savedAt,
+          style: parsed.style,
         }),
       );
     } catch {
@@ -547,7 +556,11 @@ export function BriefingContextWorkspace({
     }
   }
 
-  async function generateBriefing(context = result, style = briefingStyle): Promise<WrittenBriefing | null> {
+  async function generateBriefing(
+    context = result,
+    style = briefingStyle,
+    focus = briefingFocus,
+  ): Promise<WrittenBriefing | null> {
     if (!context) return null;
 
     setBriefingStatus("loading");
@@ -558,6 +571,7 @@ export function BriefingContextWorkspace({
       const response = await fetch("/api/briefing/generate", {
         body: JSON.stringify({
           context,
+          focus,
           style,
         }),
         headers: {
@@ -581,7 +595,9 @@ export function BriefingContextWorkspace({
         latestBriefingStorageKey,
         JSON.stringify({
           briefing: payload.briefing,
+          focus,
           savedAt,
+          style,
         }),
       );
       window.localStorage.setItem(morningBriefingLastRunStorageKey, savedAt);
@@ -598,14 +614,34 @@ export function BriefingContextWorkspace({
     }
   }
 
-  async function startMorningBriefing(command?: string): Promise<VoiceCommandExecutionResult> {
+  function updateBriefingFocus(nextFocus: BriefingFocus) {
+    if (nextFocus === briefingFocus) return;
+
+    setBriefingFocus(nextFocus);
+
+    if (!briefing) return;
+
+    setBriefing(null);
+    setBriefingStatus("idle");
+    setRestoredAt(null);
+    setBriefingError("Briefing focus changed. Generate a new transcript before creating audio.");
+    window.localStorage.removeItem(latestBriefingStorageKey);
+    window.dispatchEvent(new Event("inboxcast:setup-updated"));
+  }
+
+  async function startMorningBriefing(
+    command?: string,
+    focusOverride?: BriefingFocus,
+  ): Promise<VoiceCommandExecutionResult> {
     const preset = readMorningBriefingPreset();
+    const nextFocus = focusOverride ?? preset.briefingFocus;
     const { rangeLabel, request, usedFallback } = buildMorningBriefingRequest(
       preset,
       window.localStorage.getItem(morningBriefingLastRunStorageKey),
     );
 
     setBriefingStyle(preset.briefingStyle);
+    setBriefingFocus(nextFocus);
     setMorningStatus("fetching");
     setMorningMessage(`Fetching email context for ${rangeLabel.toLowerCase()}...`);
     setCommandRange(request);
@@ -632,7 +668,7 @@ export function BriefingContextWorkspace({
         : "Generating briefing...",
     );
 
-    const nextBriefing = await generateBriefing(nextContext, preset.briefingStyle);
+    const nextBriefing = await generateBriefing(nextContext, preset.briefingStyle, nextFocus);
 
     if (!nextBriefing) {
       setMorningStatus("error");
@@ -666,6 +702,7 @@ export function BriefingContextWorkspace({
     return {
       action: [
         emptyPresetRange ? "Nothing major found for this preset range." : "Fetched context and generated your morning briefing.",
+        `Focus: ${briefingFocusLabel(nextFocus)}.`,
         preset.generateAudioAfterBriefing ? "Audio is preparing." : "Audio was not generated automatically.",
         usedFallback ? "Since last briefing fell back to last 24 hours." : "",
       ]
@@ -682,10 +719,30 @@ export function BriefingContextWorkspace({
     const parsed = parseVoiceCommand(command);
 
     if (parsed.kind === "morning_briefing") {
-      return startMorningBriefing(command);
+      return startMorningBriefing(command, parsed.focus);
+    }
+
+    if (parsed.kind === "focus_briefing") {
+      setBriefingFocus(parsed.focus);
+
+      if (result) {
+        const nextBriefing = await generateBriefing(result, briefingStyle, parsed.focus);
+
+        return {
+          action: nextBriefing
+            ? `Generated a ${briefingFocusLabel(parsed.focus).toLowerCase()} briefing from the current context.`
+            : "Briefing generation failed.",
+          heard: command,
+          intent: parsed.intent,
+          status: nextBriefing ? "success" : "error",
+        };
+      }
+
+      return startMorningBriefing(command, parsed.focus);
     }
 
     if (parsed.kind === "generate_briefing") {
+      if (parsed.focus) setBriefingFocus(parsed.focus);
       setCommandRange(parsed.range);
       const nextContext = await fetchContext(parsed.range);
 
@@ -699,7 +756,7 @@ export function BriefingContextWorkspace({
         };
       }
 
-      const nextBriefing = await generateBriefing(nextContext);
+      const nextBriefing = await generateBriefing(nextContext, briefingStyle, parsed.focus ?? briefingFocus);
 
       return {
         action: nextBriefing ? "Fetched context and generated a written briefing." : "Fetched context, but briefing generation failed.",
@@ -905,6 +962,7 @@ export function BriefingContextWorkspace({
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <select
+                  aria-label="Briefing style"
                   className="field sm:w-48"
                   onChange={(event) => setBriefingStyle(event.target.value as BriefingStyle)}
                   value={briefingStyle}
@@ -912,6 +970,18 @@ export function BriefingContextWorkspace({
                   {briefingStyles.map((style) => (
                     <option key={style} value={style}>
                       {style}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Briefing focus"
+                  className="field sm:w-52"
+                  onChange={(event) => updateBriefingFocus(event.target.value as BriefingFocus)}
+                  value={briefingFocus}
+                >
+                  {briefingFocusOptions.map((focus) => (
+                    <option key={focus.value} value={focus.value}>
+                      {focus.label}
                     </option>
                   ))}
                 </select>

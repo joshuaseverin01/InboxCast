@@ -1,4 +1,5 @@
-import type { BriefingContextFilters, BriefingContextRequest, BriefingStyle } from "@/lib/google/types";
+import { defaultBriefingFocus } from "@/lib/briefingFocus";
+import type { BriefingContextFilters, BriefingContextRequest, BriefingFocus, BriefingStyle } from "@/lib/google/types";
 
 export type MorningBriefingRange =
   | "since_yesterday_8pm"
@@ -15,6 +16,7 @@ export type MorningBriefingPreset = {
   includeNewsletters: boolean;
   includePromotions: boolean;
   briefingStyle: BriefingStyle;
+  briefingFocus: BriefingFocus;
   generateAudioAfterBriefing: boolean;
 };
 
@@ -31,6 +33,7 @@ export const morningBriefingRangeOptions: Array<{ value: MorningBriefingRange; l
 ];
 
 export const defaultMorningBriefingPreset: MorningBriefingPreset = {
+  briefingFocus: defaultBriefingFocus,
   briefingStyle: "concise",
   generateAudioAfterBriefing: false,
   includeCalendar: true,

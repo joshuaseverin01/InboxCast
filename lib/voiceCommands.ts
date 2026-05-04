@@ -1,15 +1,22 @@
-import type { BriefingContextRequest } from "@/lib/google/types";
+import type { BriefingContextRequest, BriefingFocus } from "@/lib/google/types";
 
 export type ParsedVoiceCommand =
   | {
       kind: "morning_briefing";
       intent: "Generate briefing";
+      focus?: BriefingFocus;
+    }
+  | {
+      kind: "focus_briefing";
+      intent: "Generate briefing";
+      focus: BriefingFocus;
     }
   | {
       kind: "generate_briefing";
       intent: "Generate briefing";
       range: BriefingContextRequest;
       rangeLabel: string;
+      focus?: BriefingFocus;
     }
   | {
       kind: "audio";
@@ -136,8 +143,30 @@ function isBriefingCommand(normalized: string) {
   );
 }
 
+function parseFocus(normalized: string): BriefingFocus | null {
+  if (
+    normalized.includes("action only") ||
+    normalized.includes("needs action") ||
+    normalized.includes("only tell me what needs action") ||
+    normalized.includes("what needs action")
+  ) {
+    return "action_only";
+  }
+
+  if (normalized.includes("skip low priority") || normalized.includes("skip the low priority")) {
+    return "skip_low_priority";
+  }
+
+  if (normalized.includes("full briefing") || normalized.includes("the full briefing")) {
+    return "full";
+  }
+
+  return null;
+}
+
 export function parseVoiceCommand(command: string): ParsedVoiceCommand {
   const normalized = normalize(command);
+  const focus = parseFocus(normalized);
 
   if (!normalized) {
     return {
@@ -173,6 +202,7 @@ export function parseVoiceCommand(command: string): ParsedVoiceCommand {
 
   if (/\b(my )?morning briefing\b/.test(normalized)) {
     return {
+      focus: focus ?? undefined,
       intent: "Generate briefing",
       kind: "morning_briefing",
     };
@@ -195,6 +225,14 @@ export function parseVoiceCommand(command: string): ParsedVoiceCommand {
     const parsedRange = parseTimeRange(normalized);
 
     if (!parsedRange) {
+      if (focus) {
+        return {
+          focus,
+          intent: "Generate briefing",
+          kind: "focus_briefing",
+        };
+      }
+
       return {
         intent: "Generate briefing",
         kind: "time_error",
@@ -203,10 +241,19 @@ export function parseVoiceCommand(command: string): ParsedVoiceCommand {
     }
 
     return {
+      focus: focus ?? undefined,
       intent: "Generate briefing",
       kind: "generate_briefing",
       range: parsedRange.value,
       rangeLabel: parsedRange.label,
+    };
+  }
+
+  if (focus && (normalized.includes("skip low priority") || normalized.includes("needs action"))) {
+    return {
+      focus,
+      intent: "Generate briefing",
+      kind: "focus_briefing",
     };
   }
 

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { AlarmClock, Volume2 } from "lucide-react";
-import type { BriefingStyle } from "@/lib/google/types";
+import { briefingFocusOptions } from "@/lib/briefingFocus";
+import type { BriefingFocus, BriefingStyle } from "@/lib/google/types";
 import {
   defaultMorningBriefingPreset,
   morningBriefingRangeOptions,
@@ -76,7 +77,7 @@ export function MorningBriefingSettings() {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <label className="block text-sm font-medium text-mist-300">
           Default range
           <select
@@ -102,6 +103,21 @@ export function MorningBriefingSettings() {
             {briefingStyles.map((style) => (
               <option key={style} value={style}>
                 {style}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-sm font-medium text-mist-300">
+          Briefing focus
+          <select
+            className="field mt-2"
+            onChange={(event) => updatePreset({ ...preset, briefingFocus: event.target.value as BriefingFocus })}
+            value={preset.briefingFocus}
+          >
+            {briefingFocusOptions.map((focus) => (
+              <option key={focus.value} value={focus.value}>
+                {focus.label}
               </option>
             ))}
           </select>

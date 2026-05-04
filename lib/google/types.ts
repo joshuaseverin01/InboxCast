@@ -20,6 +20,7 @@ export type GmailMetadataMessage = {
   date: string;
   snippet?: string;
   labels: string[];
+  hasListUnsubscribe?: boolean;
 };
 
 export type GmailFullMessageContent = {
@@ -85,6 +86,7 @@ export type BriefingContextErrorResponse = {
 };
 
 export type BriefingStyle = "concise" | "detailed" | "executive" | "casual podcast";
+export type BriefingFocus = "full" | "action_only" | "skip_low_priority";
 
 export type WrittenBriefing = {
   intro: string;
@@ -99,6 +101,7 @@ export type WrittenBriefing = {
 export type WrittenBriefingRequest = {
   context: BriefingContextResponse;
   style: BriefingStyle;
+  focus?: BriefingFocus;
 };
 
 export type WrittenBriefingResponse = {

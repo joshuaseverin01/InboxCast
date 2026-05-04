@@ -7,6 +7,8 @@ import type {
   BriefingContextErrorResponse,
   BriefingContextRequest,
   BriefingContextResponse,
+  BriefingFocus,
+  BriefingStyle,
   GmailFullMessageContent,
   GmailMetadataMessage,
   WrittenBriefing,
@@ -23,7 +25,9 @@ type ChatMessage = {
 type LatestBriefing = {
   context?: BriefingContextResponse | null;
   briefing: WrittenBriefing;
+  focus?: BriefingFocus;
   savedAt: string;
+  style?: BriefingStyle;
 };
 
 type SavedOutput = {
@@ -742,7 +746,9 @@ export function ConciergeClient() {
       const parsed = JSON.parse(stored) as LatestBriefing;
       const sanitizedLatest = {
         briefing: parsed.briefing,
+        focus: parsed.focus,
         savedAt: parsed.savedAt,
+        style: parsed.style,
       };
       setLatest(sanitizedLatest);
       window.localStorage.setItem(latestBriefingStorageKey, JSON.stringify(sanitizedLatest));

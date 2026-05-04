@@ -140,6 +140,7 @@ function toMetadataMessage(message: GmailMessageResponse): GmailMetadataMessage 
     subject: getHeader(message, "Subject") || "(No subject)",
     timestamp,
     date: getHeader(message, "Date") || timestamp,
+    hasListUnsubscribe: Boolean(getHeader(message, "List-Unsubscribe")),
     snippet: cleanSnippet(message.snippet),
     labels: message.labelIds ?? [],
   };
