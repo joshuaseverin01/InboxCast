@@ -9,7 +9,7 @@ InboxCast is a private personal MVP that turns Google Gmail metadata and Calenda
 - Written AI briefing generation
 - OpenAI text-to-speech audio generation
 - AI Concierge over the latest generated briefing
-- Optional user-approved full-content reading for selected Gmail messages in Concierge
+- Optional user-approved full-content reading for selected Gmail messages and threads in Concierge
 - Local browser Outputs for saved Concierge responses, including browser-side PDF export
 - User-approved Gmail draft creation from saved Outputs
 
@@ -33,6 +33,7 @@ OPENAI_API_KEY=
 OPENAI_BRIEFING_MODEL=gpt-4o-mini
 OPENAI_CONCIERGE_MODEL=gpt-4o-mini
 OPENAI_TTS_MODEL=gpt-4o-mini-tts
+NEXT_PUBLIC_FEEDBACK_EMAIL=
 ```
 
 3. Run locally:
@@ -51,10 +52,20 @@ npm run dev
 - Add these Google OAuth consent screen scopes: `openid`, `email`, `profile`, `https://www.googleapis.com/auth/gmail.metadata`, `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.compose`, and `https://www.googleapis.com/auth/calendar.events.readonly`.
 - After adding `gmail.readonly` or `gmail.compose`, reconnect Google so the session has the new permission.
 - The app does not request Gmail send, modify, or `mail.google.com` scopes.
-- Full email bodies are read only after the user explicitly selects specific messages in Concierge.
+- Full email bodies or threads are read only after the user explicitly selects specific messages or one selected thread in Concierge.
 - Gmail draft creation only creates a draft for user review. InboxCast never sends email.
 - The app does not store full email bodies or Google OAuth tokens in `localStorage`.
 - PDF exports are generated in the browser and are not uploaded or stored permanently.
 - OpenAI usage counters in Settings are approximate browser-local counts, not billing records.
+
+## Private Beta/Testing
+
+- InboxCast is a private beta MVP for trusted testers, not a public production SaaS app.
+- Google OAuth test users may need to be added in Google Cloud before testers can connect.
+- Required scopes are `openid`, `email`, `profile`, `gmail.metadata`, `gmail.readonly`, `gmail.compose`, and `calendar.events.readonly`.
+- Testers should reconnect Google after any scope changes.
+- Browser-local soft limits are used to reduce accidental API credit spikes: 10 briefings/day, 10 TTS generations/day, and 50 Concierge AI calls/day.
+- Feedback is stored locally in the tester browser and can optionally open a mailto link if `NEXT_PUBLIC_FEEDBACK_EMAIL` is configured.
+- Known limitations: no database-backed accounts, no formal compliance audit, no public privacy/legal launch package, and AI outputs must be reviewed before acting.
 
 See `SECURITY_NOTES.md` for the current data flow and pre-public-launch risks.

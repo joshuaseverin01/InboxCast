@@ -3,6 +3,7 @@ import { ArrowRight, CalendarCheck, MailCheck, Play, WandSparkles } from "lucide
 import { auth } from "@/auth";
 import { AppShell } from "@/components/AppShell";
 import { BriefingContextWorkspace } from "@/components/BriefingContextWorkspace";
+import { FeedbackButton } from "@/components/FeedbackButton";
 import { ConnectGoogleAccountButton, DisconnectGoogleAccountButton } from "@/components/GoogleAccountActions";
 import { PrivatePrototypeNotice } from "@/components/PrivatePrototypeNotice";
 import { SetupChecklist } from "@/components/SetupChecklist";
@@ -30,6 +31,9 @@ export default async function DashboardPage() {
                 <Play className="h-4 w-4 fill-current" />
                 Generate Briefing
               </Link>
+            </div>
+            <div className="mt-5">
+              <FeedbackButton source="Dashboard" />
             </div>
           </section>
 

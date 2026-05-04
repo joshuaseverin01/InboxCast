@@ -50,6 +50,16 @@ export default async function SettingsPage({
 
         <UsageSummaryPanel />
 
+        <section className="surface-card rounded-[2rem] p-5 sm:p-6">
+          <p className="text-sm font-medium text-violet-300">Private beta guardrails</p>
+          <h2 className="mt-2 text-2xl font-semibold text-mist-50">Cost and privacy reminder</h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-mist-500">
+            AI briefings, Concierge, and audio use API credits. During the private beta, this browser has soft daily
+            limits to reduce accidental cost spikes. Avoid highly sensitive information for now, and review AI outputs
+            before acting.
+          </p>
+        </section>
+
         <MorningBriefingSettings />
 
         <section className="grid gap-6 lg:grid-cols-2">
@@ -110,7 +120,7 @@ export default async function SettingsPage({
           </div>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-mist-500">
             InboxCast uses a secure Auth.js session cookie. It does not send email, does not ask for Gmail send or
-            modify permissions, and only reads full email bodies after you explicitly select messages.
+            modify permissions, and only reads full email or thread content after you explicitly approve it.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <a

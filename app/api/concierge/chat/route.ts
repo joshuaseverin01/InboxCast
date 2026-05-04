@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
-import type { BriefingContextResponse, GmailFullMessageContent, WrittenBriefing } from "@/lib/google/types";
+import type {
+  BriefingContextResponse,
+  GmailFullMessageContent,
+  GmailThreadContent,
+  WrittenBriefing,
+} from "@/lib/google/types";
 import { openAIProviderErrorMessage } from "@/lib/openai/errors";
 
 export const runtime = "nodejs";
@@ -15,6 +20,9 @@ const MAX_CALENDAR_DESCRIPTION_CHARS = 260;
 const MAX_TRANSCRIPT_CHARS = 4000;
 const MAX_FULL_MESSAGES = 3;
 const MAX_FULL_EMAIL_BODY_CHARS = 8_000;
+const MAX_FULL_THREADS = 1;
+const MAX_THREAD_MESSAGES = 10;
+const MAX_THREAD_MESSAGE_BODY_CHARS = 5_000;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -26,6 +34,7 @@ type ConciergeRequest = {
   context?: BriefingContextResponse | null;
   briefing?: WrittenBriefing | null;
   fullMessages?: GmailFullMessageContent[];
+  fullThreads?: GmailThreadContent[];
   task?: "reply_draft";
 };
 
@@ -118,6 +127,27 @@ function compactFullMessages(messages?: GmailFullMessageContent[]) {
   );
 }
 
+function compactFullThreads(threads?: GmailThreadContent[]) {
+  return (
+    threads?.slice(0, MAX_FULL_THREADS).map((thread) => ({
+      messageCount: thread.messageCount,
+      messages: thread.messages.slice(0, MAX_THREAD_MESSAGES).map((message) => ({
+        body: truncateText(message.body, MAX_THREAD_MESSAGE_BODY_CHARS),
+        date: message.date,
+        from: message.from,
+        id: message.id,
+        subject: message.subject,
+        timestamp: message.timestamp,
+        to: message.to,
+      })),
+      replyTo: thread.replyTo,
+      subject: thread.subject,
+      threadId: thread.threadId,
+      truncated: thread.truncated,
+    })) ?? []
+  );
+}
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -137,16 +167,21 @@ export async function POST(request: NextRequest) {
       return errorResponse("Missing user message.", 400);
     }
 
-    if (payload.task === "reply_draft" && !payload.fullMessages?.some((message) => message.body.trim())) {
-      return errorResponse("Read a full email before drafting a reply.", 400);
+    const hasFullMessage = payload.fullMessages?.some((message) => message.body.trim());
+    const hasFullThread = payload.fullThreads?.some((thread) =>
+      thread.messages.some((message) => message.body.trim()),
+    );
+
+    if (payload.task === "reply_draft" && !hasFullMessage && !hasFullThread) {
+      return errorResponse("Read a full email or thread before drafting a reply.", 400);
     }
 
-    // Concierge receives bounded snippets by default. Full bodies are included only
-    // for user-approved selected messages and are never persisted server-side here.
+    // Concierge receives bounded snippets by default. Full bodies/threads are included only
+    // for user-approved selected messages or threads and are never persisted server-side here.
     const systemPrompt =
       payload.task === "reply_draft"
-        ? "You are InboxCast reply drafting assistant. Draft a concise, professional, natural email reply using only the explicitly user-approved selected full email message and the user's drafting instruction. Do not invent facts, commitments, dates, attachments, or relationships. If needed information is missing, ask a brief clarifying question in the reply. Return only the editable reply body. Do not include a subject line or commentary. Do not send emails."
-        : "You are InboxCast Concierge. Answer questions using only the provided generated briefing, Gmail metadata, snippets, labels, Calendar event snippets, and any explicitly user-approved selected full email messages. Do not claim to have read full email bodies unless selectedFullEmailMessages are provided. If a snippet is insufficient, say that only preview/snippet data is available. Clearly distinguish selected full-email context from snippet-only context. Do not send emails. If drafting replies, provide drafts only.";
+        ? "You are InboxCast reply drafting assistant. Draft a concise, professional, natural email reply using only the explicitly user-approved selected full email message or selected full thread and the user's drafting instruction. If selectedFullThreads are provided, use the thread conversation context and draft to the latest relevant sender. Do not invent facts, commitments, dates, attachments, or relationships. If needed information is missing or ambiguous, ask a brief clarifying question in the reply. Return only the editable reply body. Do not include a subject line or commentary. Do not send emails."
+        : "You are InboxCast Concierge. Answer questions using only the provided generated briefing, Gmail metadata, snippets, labels, Calendar event snippets, any explicitly user-approved selected full email messages, and any explicitly user-approved selected full threads. Do not claim to have read full email bodies unless selectedFullEmailMessages or selectedFullThreads are provided. If a snippet is insufficient, say that only preview/snippet data is available. Clearly distinguish selected full-thread context from selected full-message context and snippet-only context. Do not send emails. If drafting replies, provide drafts only.";
     const response = await fetch("https://api.openai.com/v1/responses", {
       body: JSON.stringify({
         input: [
@@ -160,6 +195,7 @@ export async function POST(request: NextRequest) {
               context: compactContext(payload.context, payload.briefing),
               conversation: messages,
               selectedFullEmailMessages: compactFullMessages(payload.fullMessages),
+              selectedFullThreads: compactFullThreads(payload.fullThreads),
             }),
           },
         ],

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Copy, Loader2, MailOpen, MailPlus, Save, SendHorizonal, Sparkles, Trash2, UserRound } from "lucide-react";
+import { FeedbackButton } from "@/components/FeedbackButton";
 import type {
   BriefingContextErrorResponse,
   BriefingContextRequest,
@@ -11,9 +12,10 @@ import type {
   BriefingStyle,
   GmailFullMessageContent,
   GmailMetadataMessage,
+  GmailThreadContent,
   WrittenBriefing,
 } from "@/lib/google/types";
-import { incrementUsageCount } from "@/lib/localUsage";
+import { getUsageLimitStatus, incrementUsageCount } from "@/lib/localUsage";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = {
@@ -84,8 +86,16 @@ type ReadMessagesResponse = {
   };
 };
 
+type ReadThreadResponse = {
+  thread?: GmailThreadContent;
+  error?: {
+    message?: string;
+  };
+};
+
 type ReplyDraftState = {
-  email: GmailFullMessageContent;
+  email?: GmailFullMessageContent;
+  thread?: GmailThreadContent;
   instruction: string;
   replyBody: string;
   status: FullReadStatus | null;
@@ -346,6 +356,26 @@ function replySubject(subject: string) {
   return /^re:/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
 }
 
+function threadSubject(thread: GmailThreadContent) {
+  return thread.subject || thread.messages.at(-1)?.subject || "(No subject)";
+}
+
+function replyDraftSourceLabel(replyDraft: ReplyDraftState) {
+  if (replyDraft.thread) {
+    return `full-read thread: ${threadSubject(replyDraft.thread)}`;
+  }
+
+  return `full-read email from ${replyDraft.email?.from ?? "Unknown sender"}: ${
+    replyDraft.email?.subject ?? "(No subject)"
+  }`;
+}
+
+function replyDraftLinkedContext(replyDraft: ReplyDraftState) {
+  if (replyDraft.thread) return `Thread - ${threadSubject(replyDraft.thread)}`;
+  if (replyDraft.email) return `${replyDraft.email.from} - ${replyDraft.email.subject}`;
+  return "Selected email context";
+}
+
 function loadOutputs() {
   try {
     return JSON.parse(window.localStorage.getItem(outputsStorageKey) ?? "[]") as SavedOutput[];
@@ -380,6 +410,7 @@ export function ConciergeClient() {
   const [lastContext, setLastContext] = useState<BriefingContextResponse | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [fullMessages, setFullMessages] = useState<GmailFullMessageContent[]>([]);
+  const [fullThreads, setFullThreads] = useState<GmailThreadContent[]>([]);
   const [fullReadStatus, setFullReadStatus] = useState<FullReadStatus | null>(null);
   const [replyDraft, setReplyDraft] = useState<ReplyDraftState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -423,6 +454,7 @@ export function ConciergeClient() {
     setLastContext(null);
     setSelectedMessageIds([]);
     setFullMessages([]);
+    setFullThreads([]);
     setFullReadStatus(null);
     setReplyDraft(null);
   }
@@ -484,6 +516,58 @@ export function ConciergeClient() {
     }
   }
 
+  async function readSelectedThread(threadId: string) {
+    if (!threadId.trim()) {
+      setFullReadStatus({ message: "Choose a thread to read.", state: "error" });
+      return;
+    }
+
+    setFullReadStatus({ message: "Reading selected thread content...", state: "loading" });
+    setError(null);
+
+    try {
+      const response = await fetch("/api/google/threads/read", {
+        body: JSON.stringify({ threadId }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as ReadThreadResponse | null;
+
+      if (!response.ok || !payload?.thread) {
+        throw new Error(payload?.error?.message ?? "InboxCast could not read the selected thread.");
+      }
+
+      const readThread = payload.thread;
+      setFullThreads([readThread]);
+      setSelectedMessageIds([]);
+      setFullReadStatus({
+        message: readThread.truncated
+          ? "Selected thread context is loaded. InboxCast read the latest 10 messages from this thread."
+          : "Selected thread context is loaded for follow-up questions in this conversation.",
+        state: "success",
+      });
+      setMessages((current) => [
+        ...current,
+        {
+          content: [
+            `Full-thread context approved for "${readThread.subject}".`,
+            readThread.truncated
+              ? "This thread has multiple messages. InboxCast read up to the latest 10 messages."
+              : `InboxCast read ${readThread.messages.length} message${readThread.messages.length === 1 ? "" : "s"} in this thread.`,
+            "Ask a follow-up or draft a reply when you're ready.",
+          ].join(" "),
+          id: crypto.randomUUID(),
+          role: "assistant",
+        },
+      ]);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "InboxCast could not read the selected thread.";
+      setFullReadStatus({ message: friendlyError(message), state: "error" });
+    }
+  }
+
   function startReplyDraft(email: GmailFullMessageContent) {
     setReplyDraft({
       copied: false,
@@ -499,9 +583,37 @@ export function ConciergeClient() {
     });
   }
 
+  function startThreadReplyDraft(thread: GmailThreadContent) {
+    setReplyDraft({
+      copied: false,
+      draftStatus: null,
+      draftSubject: replySubject(threadSubject(thread)),
+      draftTo: extractEmailAddress(thread.replyTo ?? thread.messages.at(-1)?.from ?? ""),
+      instruction: "",
+      replyBody: "",
+      saved: false,
+      showDraftConfirm: false,
+      status: null,
+      thread,
+    });
+  }
+
   async function generateReplyDraft() {
     if (!replyDraft) {
-      setError("Read a full email before drafting a reply.");
+      setError("Read a full email or thread before drafting a reply.");
+      return;
+    }
+
+    const limit = getUsageLimitStatus("concierge");
+    if (!limit.ok) {
+      setReplyDraft((current) =>
+        current
+          ? {
+              ...current,
+              status: { message: limit.message ?? "You've hit today's private beta usage limit for this feature.", state: "error" },
+            }
+          : current,
+      );
       return;
     }
 
@@ -522,17 +634,26 @@ export function ConciergeClient() {
 
     try {
       const instruction = replyDraft.instruction.trim() || "Keep it concise, professional, and natural.";
+      const isThreadDraft = Boolean(replyDraft.thread);
       const response = await fetch("/api/concierge/chat", {
         body: JSON.stringify({
-          fullMessages: [replyDraft.email],
+          fullMessages: replyDraft.email ? [replyDraft.email] : [],
+          fullThreads: replyDraft.thread ? [replyDraft.thread] : [],
           messages: [
             {
               content: [
-                "Draft a reply to the selected full-read email.",
+                isThreadDraft
+                  ? "Draft a reply based on the selected full-read email thread."
+                  : "Draft a reply to the selected full-read email.",
                 `User instruction: ${instruction}`,
-                "Use only the selected email content and this instruction. Do not invent facts.",
+                isThreadDraft
+                  ? "Use only the selected thread context and this instruction. Do not invent facts."
+                  : "Use only the selected email content and this instruction. Do not invent facts.",
+                isThreadDraft ? "Draft to the latest relevant sender in the thread." : "",
                 "Return only the reply body.",
-              ].join("\n"),
+              ]
+                .filter(Boolean)
+                .join("\n"),
               role: "user",
             },
           ],
@@ -581,8 +702,10 @@ export function ConciergeClient() {
     if (!replyDraft?.replyBody.trim()) return;
 
     saveOutput(replyDraft.replyBody, {
-      linkedEmail: `${replyDraft.email.from} - ${replyDraft.email.subject}`,
-      title: `Reply draft: ${replyDraft.email.subject}`.slice(0, 90),
+      linkedEmail: replyDraftLinkedContext(replyDraft),
+      title: `Reply draft: ${
+        replyDraft.thread ? threadSubject(replyDraft.thread) : replyDraft.email?.subject ?? "(No subject)"
+      }`.slice(0, 90),
       type: "Draft reply",
     });
     setReplyDraft((current) => (current ? { ...current, saved: true } : current));
@@ -655,7 +778,7 @@ export function ConciergeClient() {
 
     const contextIntent = parseContextQuestion(content);
 
-    if (!latest && !lastContext && fullMessages.length === 0 && !contextIntent) {
+    if (!latest && !lastContext && fullMessages.length === 0 && fullThreads.length === 0 && !contextIntent) {
       setError("Ask with a time range, like 'since yesterday' or 'last 24 hours', or generate a briefing first.");
       return;
     }
@@ -675,11 +798,13 @@ export function ConciergeClient() {
     try {
       const freshContext = contextIntent ? await fetchContextForQuestion(contextIntent.range) : null;
       const approvedFullMessages = freshContext ? [] : fullMessages;
+      const approvedFullThreads = freshContext ? [] : fullThreads;
 
       if (freshContext) {
         setLastContext(freshContext);
         setSelectedMessageIds([]);
         setFullMessages([]);
+        setFullThreads([]);
         setFullReadStatus(null);
         setReplyDraft(null);
       }
@@ -696,6 +821,11 @@ export function ConciergeClient() {
         return;
       }
 
+      const limit = getUsageLimitStatus("concierge");
+      if (!limit.ok) {
+        throw new Error(limit.message ?? "You've hit today's private beta usage limit for this feature.");
+      }
+
       setLoadingLabel("Concierge is thinking");
       const response = await fetch("/api/concierge/chat", {
         body: JSON.stringify({
@@ -703,6 +833,7 @@ export function ConciergeClient() {
           // Freshly fetched context stays in component state for this request only.
           context: freshContext ?? latest?.context ?? lastContext ?? null,
           fullMessages: approvedFullMessages,
+          fullThreads: approvedFullThreads,
           messages: nextMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
         }),
         headers: {
@@ -784,6 +915,7 @@ export function ConciergeClient() {
       )}
 
       <div className="mb-5 flex flex-wrap gap-2">
+        <FeedbackButton source="Concierge" />
         {suggestions.map((suggestion) => (
           <button
             className="secondary-button px-4 py-2 text-xs"
@@ -795,7 +927,7 @@ export function ConciergeClient() {
             {suggestion}
           </button>
         ))}
-        {(messages.length > 0 || lastContext || fullMessages.length > 0) && (
+        {(messages.length > 0 || lastContext || fullMessages.length > 0 || fullThreads.length > 0) && (
           <button className="secondary-button px-4 py-2 text-xs text-mist-300" onClick={clearConversation} type="button">
             <Trash2 className="h-3.5 w-3.5" />
             Clear conversation
@@ -865,7 +997,11 @@ export function ConciergeClient() {
             <div>
               <p className="text-sm font-semibold text-mist-50">Fetched email context</p>
               <p className="mt-1 text-sm leading-6 text-mist-500">
-                InboxCast will read only the selected emails. It will not read your full inbox.
+                InboxCast will read only the selected emails or selected thread. It will not read your full inbox.
+              </p>
+              <p className="mt-1 text-xs leading-5 text-mist-600">
+                InboxCast will read only this selected thread. It will not read your full inbox. This thread may have
+                multiple messages; InboxCast will read up to the latest 10 messages.
               </p>
             </div>
             <button
@@ -887,6 +1023,7 @@ export function ConciergeClient() {
             {lastContext.gmail.messages.map((email) => {
               const selected = selectedMessageIds.includes(email.id);
               const fullRead = fullMessages.some((message) => message.id === email.id);
+              const fullThread = fullThreads.find((thread) => thread.threadId === email.threadId);
 
               return (
                 <article className="rounded-2xl border border-white/10 bg-ink-950/[0.42] p-3" key={email.id}>
@@ -914,6 +1051,17 @@ export function ConciergeClient() {
                       <MailOpen className="h-3.5 w-3.5" />
                       {fullRead ? "Full email read" : "Read full email"}
                     </button>
+                    {email.threadId && (
+                      <button
+                        className="secondary-button px-3 py-2 text-xs"
+                        disabled={fullReadStatus?.state === "loading" || Boolean(fullThread)}
+                        onClick={() => readSelectedThread(email.threadId)}
+                        type="button"
+                      >
+                        <MailOpen className="h-3.5 w-3.5" />
+                        {fullThread ? "Full thread read" : "Read full thread"}
+                      </button>
+                    )}
                     {fullRead && (
                       <button
                         className="secondary-button px-3 py-2 text-xs"
@@ -925,6 +1073,16 @@ export function ConciergeClient() {
                       >
                         <MailPlus className="h-3.5 w-3.5" />
                         Draft reply
+                      </button>
+                    )}
+                    {fullThread && (
+                      <button
+                        className="secondary-button px-3 py-2 text-xs"
+                        onClick={() => startThreadReplyDraft(fullThread)}
+                        type="button"
+                      >
+                        <MailPlus className="h-3.5 w-3.5" />
+                        Draft reply from thread
                       </button>
                     )}
                   </div>
@@ -941,7 +1099,7 @@ export function ConciergeClient() {
 
           <p className="mt-3 text-xs leading-5 text-mist-600">
             Select up to {MAX_SELECTED_EMAILS} emails. Full bodies stay in this browser session only and are sent to
-            Concierge only for follow-up answers.
+            Concierge only for follow-up answers. Thread reads stay in session state and are limited to the selected thread.
           </p>
 
           {fullReadStatus && (
@@ -967,8 +1125,13 @@ export function ConciergeClient() {
             <div>
               <p className="text-sm font-semibold text-mist-50">Draft reply</p>
               <p className="mt-1 text-sm leading-6 text-mist-500">
-                Using the full-read email from {replyDraft.email.from}: {replyDraft.email.subject}
+                Using {replyDraftSourceLabel(replyDraft)}
               </p>
+              {replyDraft.thread && (
+                <p className="mt-1 text-xs leading-5 text-mist-600">
+                  Thread context is used only for this review flow. InboxCast creates a draft only after confirmation.
+                </p>
+              )}
             </div>
             <button className="secondary-button px-3 py-2 text-xs" onClick={() => setReplyDraft(null)} type="button">
               Close

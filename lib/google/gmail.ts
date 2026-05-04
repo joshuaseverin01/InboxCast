@@ -1,5 +1,11 @@
 import { fetchGoogleJson } from "@/lib/google/fetch";
-import type { BriefingContextFilters, GmailFullMessageContent, GmailMetadataMessage } from "@/lib/google/types";
+import type {
+  BriefingContextFilters,
+  GmailFullMessageContent,
+  GmailMetadataMessage,
+  GmailThreadContent,
+  GmailThreadMessageContent,
+} from "@/lib/google/types";
 
 type GmailListResponse = {
   messages?: Array<{
@@ -17,6 +23,11 @@ type GmailMessageResponse = {
   internalDate?: string;
   snippet?: string;
   payload?: GmailPayload;
+};
+
+type GmailThreadResponse = {
+  id: string;
+  messages?: GmailMessageResponse[];
 };
 
 type GmailPayload = {
@@ -43,6 +54,9 @@ const MAX_GMAIL_MESSAGES = 20;
 const MAX_GMAIL_MESSAGES_TO_SCAN = 200;
 const GMAIL_METADATA_CONCURRENCY = 2;
 const MAX_FULL_EMAIL_CHARS = 8_000;
+const MAX_THREAD_MESSAGES = 10;
+const MAX_THREAD_MESSAGE_CHARS = 5_000;
+const MAX_THREAD_TOTAL_CHARS = 25_000;
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -95,14 +109,14 @@ function stripHtml(value: string) {
     .replace(/&#39;/gi, "'");
 }
 
-function cleanBodyText(value: string) {
+function cleanBodyText(value: string, maxLength = MAX_FULL_EMAIL_CHARS) {
   return value
     .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
-    .slice(0, MAX_FULL_EMAIL_CHARS);
+    .slice(0, maxLength);
 }
 
 function collectBodyParts(payload: GmailPayload | undefined, targetMimeType: "text/plain" | "text/html"): string[] {
@@ -232,6 +246,14 @@ async function getFullMessage(accessToken: string, id: string) {
   return fetchGoogleJson<GmailMessageResponse>(url, accessToken);
 }
 
+async function getFullThread(accessToken: string, threadId: string) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}`);
+  url.searchParams.set("format", "full");
+  url.searchParams.set("fields", "id,messages(id,threadId,internalDate,payload)");
+
+  return fetchGoogleJson<GmailThreadResponse>(url, accessToken);
+}
+
 function toFullMessageContent(message: GmailMessageResponse): GmailFullMessageContent {
   const internalDateMs = Number(message.internalDate);
   const timestamp = Number.isFinite(internalDateMs) ? new Date(internalDateMs).toISOString() : new Date().toISOString();
@@ -243,8 +265,57 @@ function toFullMessageContent(message: GmailMessageResponse): GmailFullMessageCo
     id: message.id,
     subject: getHeader(message, "Subject") || "(No subject)",
     threadId: message.threadId,
+    to: getHeader(message, "To") || undefined,
     timestamp,
   };
+}
+
+function timestampForMessage(message: GmailMessageResponse) {
+  const internalDateMs = Number(message.internalDate);
+  return Number.isFinite(internalDateMs) ? new Date(internalDateMs).toISOString() : new Date().toISOString();
+}
+
+function toThreadMessageContent(message: GmailMessageResponse): GmailThreadMessageContent {
+  const timestamp = timestampForMessage(message);
+
+  return {
+    body: cleanBodyText(extractBodyText(message.payload), MAX_THREAD_MESSAGE_CHARS),
+    date: getHeader(message, "Date") || timestamp,
+    from: getHeader(message, "From") || "Unknown sender",
+    id: message.id,
+    subject: getHeader(message, "Subject") || "(No subject)",
+    threadId: message.threadId,
+    to: getHeader(message, "To") || undefined,
+    timestamp,
+  };
+}
+
+function extractEmailAddress(value: string) {
+  const bracketed = value.match(/<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>/);
+  if (bracketed?.[1]) return bracketed[1].toLowerCase();
+
+  return value.match(/[^\s<>,;]+@[^\s<>,;]+\.[^\s<>,;]+/)?.[0]?.toLowerCase() ?? "";
+}
+
+function capThreadBodyTotal(messages: GmailThreadMessageContent[]) {
+  let remaining = MAX_THREAD_TOTAL_CHARS;
+
+  return messages.map((message) => {
+    if (remaining <= 0) return { ...message, body: "" };
+
+    const body = message.body.slice(0, remaining);
+    remaining -= body.length;
+    return { ...message, body };
+  });
+}
+
+function replyToForThread(messages: GmailThreadMessageContent[], userEmail?: string | null) {
+  const normalizedUserEmail = userEmail?.toLowerCase() ?? "";
+  const latestRelevant = [...messages]
+    .reverse()
+    .find((message) => extractEmailAddress(message.from) !== normalizedUserEmail);
+
+  return latestRelevant?.from ?? messages.at(-1)?.from;
 }
 
 export async function fetchGmailMetadataForRange({
@@ -288,4 +359,31 @@ export async function fetchSelectedGmailFullMessages({
   }
 
   return messages;
+}
+
+export async function fetchSelectedGmailThread({
+  accessToken,
+  threadId,
+  userEmail,
+}: {
+  accessToken: string;
+  threadId: string;
+  userEmail?: string | null;
+}): Promise<GmailThreadContent> {
+  const thread = await getFullThread(accessToken, threadId);
+  const allMessages = (thread.messages ?? []).sort(
+    (a, b) => new Date(timestampForMessage(a)).getTime() - new Date(timestampForMessage(b)).getTime(),
+  );
+  const selectedMessages = allMessages.slice(-MAX_THREAD_MESSAGES).map(toThreadMessageContent);
+  const cappedMessages = capThreadBodyTotal(selectedMessages);
+  const firstSubject = cappedMessages.find((message) => message.subject)?.subject ?? "(No subject)";
+
+  return {
+    messageCount: allMessages.length,
+    messages: cappedMessages,
+    replyTo: replyToForThread(cappedMessages, userEmail),
+    subject: firstSubject,
+    threadId: thread.id,
+    truncated: allMessages.length > MAX_THREAD_MESSAGES,
+  };
 }

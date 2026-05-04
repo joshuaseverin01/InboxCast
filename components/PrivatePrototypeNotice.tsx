@@ -8,10 +8,11 @@ export function PrivatePrototypeNotice() {
           <ShieldCheck className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="text-base font-semibold text-mist-50">Private personal prototype</h2>
+          <h2 className="text-base font-semibold text-mist-50">Private beta prototype</h2>
           <p className="mt-1 text-sm leading-6 text-mist-500">
-            InboxCast is currently configured for private testing. It only requests read-oriented Google access for
-            briefing preparation, does not send email, and does not store message bodies.
+            InboxCast is currently configured for trusted private testing. Review AI outputs before acting; InboxCast
+            creates Gmail drafts only after confirmation, never sends email automatically, and reads full email or
+            thread content only after explicit approval.
           </p>
         </div>
       </div>

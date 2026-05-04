@@ -27,10 +27,31 @@ export type GmailFullMessageContent = {
   id: string;
   threadId: string;
   from: string;
+  to?: string;
   subject: string;
   date: string;
   timestamp: string;
   body: string;
+};
+
+export type GmailThreadMessageContent = {
+  id: string;
+  threadId: string;
+  from: string;
+  to?: string;
+  date: string;
+  timestamp: string;
+  subject: string;
+  body: string;
+};
+
+export type GmailThreadContent = {
+  threadId: string;
+  subject: string;
+  messages: GmailThreadMessageContent[];
+  messageCount: number;
+  truncated: boolean;
+  replyTo?: string;
 };
 
 export type GoogleCalendarEvent = {

@@ -163,7 +163,7 @@ export function SetupChecklist({
           <div className="flex gap-3">
             <MailPlus className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
             <p className="text-sm leading-6 text-mist-300">
-              Draft creation requires your confirmation, and full email content is read only for selected messages.
+              Draft creation requires your confirmation, and full email or thread content is read only after approval.
             </p>
           </div>
         </div>

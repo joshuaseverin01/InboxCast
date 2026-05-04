@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { usageStorageKey } from "@/lib/localUsage";
+import { feedbackStorageKey } from "@/lib/feedback";
+import { dailyUsageStorageKey, usageStorageKey } from "@/lib/localUsage";
 import { morningBriefingLastRunStorageKey, morningBriefingPresetStorageKey } from "@/lib/morningBriefing";
 import { onboardingCompleteStorageKey } from "@/lib/onboarding";
 
@@ -14,6 +15,8 @@ const localStorageKeys = [
   morningBriefingLastRunStorageKey,
   onboardingCompleteStorageKey,
   usageStorageKey,
+  dailyUsageStorageKey,
+  feedbackStorageKey,
 ];
 
 export function DeleteLocalDataButton() {

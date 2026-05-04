@@ -21,10 +21,11 @@ import {
   Tag,
   Volume2,
 } from "lucide-react";
+import { FeedbackButton } from "@/components/FeedbackButton";
 import { TimeRangeSelector, type TimeRangeSelectorValue } from "@/components/TimeRangeSelector";
 import { VoiceCommandButton, type VoiceCommandExecutionResult } from "@/components/VoiceCommandButton";
 import { briefingFocusLabel, briefingFocusOptions, defaultBriefingFocus } from "@/lib/briefingFocus";
-import { incrementUsageCount } from "@/lib/localUsage";
+import { getUsageLimitStatus, incrementUsageCount } from "@/lib/localUsage";
 import {
   buildMorningBriefingRequest,
   morningBriefingLastRunStorageKey,
@@ -272,6 +273,12 @@ function AudioBriefingControls({
   }, [commandNonce]);
 
   async function generateAudio(autoplay = false) {
+    const limit = getUsageLimitStatus("tts");
+    if (!limit.ok) {
+      setAudioError(limit.message ?? "You've hit today's private beta usage limit for this feature.");
+      return;
+    }
+
     setAudioLoading(true);
     setAudioError(null);
     setIsPlaying(false);
@@ -417,10 +424,13 @@ function WrittenBriefingPanel({
           </div>
           <h2 className="mt-2 text-2xl font-semibold text-mist-50">Generated transcript</h2>
         </div>
-        <button className="secondary-button px-4 py-2 text-xs" onClick={copyTranscript} type="button">
-          <Copy className="h-3.5 w-3.5" />
-          {copied ? "Copied" : "Copy transcript"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <FeedbackButton source="Briefing result" />
+          <button className="secondary-button px-4 py-2 text-xs" onClick={copyTranscript} type="button">
+            <Copy className="h-3.5 w-3.5" />
+            {copied ? "Copied" : "Copy transcript"}
+          </button>
+        </div>
       </div>
       <p className="mt-3 text-sm leading-6 text-mist-300">{briefing.intro}</p>
 
@@ -562,6 +572,13 @@ export function BriefingContextWorkspace({
     focus = briefingFocus,
   ): Promise<WrittenBriefing | null> {
     if (!context) return null;
+
+    const limit = getUsageLimitStatus("briefing");
+    if (!limit.ok) {
+      setBriefingError(limit.message ?? "You've hit today's private beta usage limit for this feature.");
+      setBriefingStatus("error");
+      return null;
+    }
 
     setBriefingStatus("loading");
     setBriefing(null);

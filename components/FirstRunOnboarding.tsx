@@ -63,6 +63,9 @@ export function FirstRunOnboarding() {
             <p className="mt-3 text-sm leading-6 text-mist-400">
               InboxCast helps you listen to what matters, follow up with Concierge, and keep useful drafts or notes.
             </p>
+            <p className="mt-3 rounded-2xl border border-violet-300/20 bg-violet-300/[0.08] p-3 text-sm leading-6 text-violet-50">
+              InboxCast is currently a private beta. Use with trusted accounts only. Review AI outputs before acting.
+            </p>
           </div>
         </div>
 
@@ -82,7 +85,8 @@ export function FirstRunOnboarding() {
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-teal-300" />
             <p className="text-sm leading-6 text-teal-50">
               InboxCast reads Gmail and Calendar only after you connect Google, creates Gmail drafts only after your
-              confirmation, never sends email automatically, and reads full email content only for messages you select.
+              confirmation, never sends email automatically, and reads full email or thread content only after explicit
+              approval. AI outputs may be imperfect and should be reviewed.
             </p>
           </div>
         </div>
