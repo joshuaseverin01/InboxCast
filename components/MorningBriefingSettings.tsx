@@ -53,6 +53,7 @@ export function MorningBriefingSettings() {
   function updatePreset(next: MorningBriefingPreset) {
     setPreset(next);
     writeMorningBriefingPreset(next);
+    window.dispatchEvent(new Event("inboxcast:setup-updated"));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1200);
   }

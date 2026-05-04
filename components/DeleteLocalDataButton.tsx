@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { usageStorageKey } from "@/lib/localUsage";
 import { morningBriefingLastRunStorageKey, morningBriefingPresetStorageKey } from "@/lib/morningBriefing";
+import { onboardingCompleteStorageKey } from "@/lib/onboarding";
 
 const localStorageKeys = [
   "inboxcast.latestBriefing",
@@ -11,6 +12,7 @@ const localStorageKeys = [
   "inboxcast.audioState",
   morningBriefingPresetStorageKey,
   morningBriefingLastRunStorageKey,
+  onboardingCompleteStorageKey,
   usageStorageKey,
 ];
 
@@ -23,6 +25,8 @@ export function DeleteLocalDataButton() {
     }
 
     window.dispatchEvent(new Event("inboxcast:usage-updated"));
+    window.dispatchEvent(new Event("inboxcast:setup-updated"));
+    window.dispatchEvent(new Event("inboxcast:onboarding-reset"));
     setCleared(true);
     window.setTimeout(() => setCleared(false), 1600);
   }

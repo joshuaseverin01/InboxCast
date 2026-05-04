@@ -585,6 +585,7 @@ export function BriefingContextWorkspace({
         }),
       );
       window.localStorage.setItem(morningBriefingLastRunStorageKey, savedAt);
+      window.dispatchEvent(new Event("inboxcast:setup-updated"));
       setRestoredAt(savedAt);
       setBriefingStatus("success");
       return payload.briefing;
@@ -777,6 +778,7 @@ export function BriefingContextWorkspace({
     setMorningStatus("idle");
     setMorningMessage(null);
     window.localStorage.removeItem(latestBriefingStorageKey);
+    window.dispatchEvent(new Event("inboxcast:setup-updated"));
   }
 
   return (

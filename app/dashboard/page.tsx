@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { BriefingContextWorkspace } from "@/components/BriefingContextWorkspace";
 import { ConnectGoogleAccountButton, DisconnectGoogleAccountButton } from "@/components/GoogleAccountActions";
 import { PrivatePrototypeNotice } from "@/components/PrivatePrototypeNotice";
+import { SetupChecklist } from "@/components/SetupChecklist";
 import { getGoogleConnectionState } from "@/lib/googleAuth";
 import { briefingOptions } from "@/lib/mockData";
 
@@ -31,6 +32,13 @@ export default async function DashboardPage() {
               </Link>
             </div>
           </section>
+
+          <SetupChecklist
+            gmailDraftConnected={googleConnection.gmailDraftConnected}
+            googleConnected={
+              googleConnection.connected && googleConnection.gmailConnected && googleConnection.calendarConnected
+            }
+          />
 
           <BriefingContextWorkspace showMorningBriefingAction title="Dashboard context" />
 

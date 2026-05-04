@@ -60,7 +60,7 @@ export function GoogleConnectionPanel({
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-mist-500">
             InboxCast keeps Google API calls server-side and keeps OAuth tokens out of browser-readable session data.
-            Full email bodies are not fetched.
+            Full email bodies are read only after you select specific messages.
           </p>
         </div>
         <div

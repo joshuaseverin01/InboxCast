@@ -5,6 +5,7 @@ import { DeleteLocalDataButton } from "@/components/DeleteLocalDataButton";
 import { GoogleConnectionPanel } from "@/components/GoogleConnectionPanel";
 import { MorningBriefingSettings } from "@/components/MorningBriefingSettings";
 import { PrivatePrototypeNotice } from "@/components/PrivatePrototypeNotice";
+import { ResetOnboardingButton } from "@/components/ResetOnboardingButton";
 import { UsageSummaryPanel } from "@/components/UsageSummaryPanel";
 import { getGoogleConnectionState } from "@/lib/googleAuth";
 import { briefingStyles, voiceOptions } from "@/lib/mockData";
@@ -111,7 +112,7 @@ export default async function SettingsPage({
             InboxCast uses a secure Auth.js session cookie. It does not send email, does not ask for Gmail send or
             modify permissions, and only reads full email bodies after you explicitly select messages.
           </p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <a
               className="secondary-button justify-start rounded-2xl px-4 py-4 text-left"
               href="https://myaccount.google.com/permissions"
@@ -120,6 +121,7 @@ export default async function SettingsPage({
             >
               Manage Google permissions
             </a>
+            <ResetOnboardingButton />
             <DeleteLocalDataButton />
           </div>
         </section>

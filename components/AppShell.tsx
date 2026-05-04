@@ -1,4 +1,5 @@
 import { BottomNav } from "@/components/BottomNav";
+import { FirstRunOnboarding } from "@/components/FirstRunOnboarding";
 import { Sidebar } from "@/components/Sidebar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -11,6 +12,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <BottomNav />
+      <FirstRunOnboarding />
     </div>
   );
 }
