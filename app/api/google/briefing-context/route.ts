@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { GoogleApiError, isGooglePermissionError, isGoogleRateLimitError } from "@/lib/google/fetch";
+import { GoogleApiError } from "@/lib/google/fetch";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/googleAuth";
 import { fetchCalendarEventsForRange, countCalendarConflicts } from "@/lib/google/calendar";
 import { fetchGmailMetadataForRange } from "@/lib/google/gmail";
@@ -14,55 +14,6 @@ import type {
 export const runtime = "nodejs";
 
 const MAX_RANGE_DAYS = 31;
-
-function scopeName(scope: string) {
-  if (scope === GOOGLE_OAUTH_SCOPES.gmailMetadata) return "gmail.metadata";
-  if (scope === GOOGLE_OAUTH_SCOPES.calendarEventsReadonly) return "calendar.events.readonly";
-  if (scope === GOOGLE_OAUTH_SCOPES.gmailReadonly) return "gmail.readonly";
-  if (scope === GOOGLE_OAUTH_SCOPES.gmailCompose) return "gmail.compose";
-  return scope;
-}
-
-function safeTokenDiagnosticLog(
-  reason: string,
-  diagnostics: {
-    hasSessionToken: boolean;
-    hasGoogleToken: boolean;
-    hasAccessToken: boolean;
-    hasRefreshToken: boolean;
-    grantedScopes: string[];
-    missingScopes: string[];
-  },
-) {
-  console.info("[google:briefing-context] auth diagnostic", {
-    grantedScopes: diagnostics.grantedScopes.map(scopeName),
-    hasAccessToken: diagnostics.hasAccessToken,
-    hasGoogleToken: diagnostics.hasGoogleToken,
-    hasRefreshToken: diagnostics.hasRefreshToken,
-    hasSessionToken: diagnostics.hasSessionToken,
-    missingScopes: diagnostics.missingScopes.map(scopeName),
-    reason,
-  });
-}
-
-function missingScopeMessage(missingScopes: string[]) {
-  const missingGmailMetadata = missingScopes.includes(GOOGLE_OAUTH_SCOPES.gmailMetadata);
-  const missingCalendar = missingScopes.includes(GOOGLE_OAUTH_SCOPES.calendarEventsReadonly);
-
-  if (missingGmailMetadata && missingCalendar) {
-    return "Missing Gmail metadata and Calendar permissions. Reconnect Google and approve Gmail metadata and Calendar events read-only access.";
-  }
-
-  if (missingGmailMetadata) {
-    return "Missing Gmail metadata permission. Reconnect Google and approve Gmail metadata access.";
-  }
-
-  if (missingCalendar) {
-    return "Missing Calendar permission. Reconnect Google and approve Calendar events read-only access.";
-  }
-
-  return "Google token is missing required scopes for this request. Reconnect Google and approve the missing permissions.";
-}
 
 function errorResponse(
   code: BriefingContextErrorCode,
@@ -131,43 +82,19 @@ export async function POST(request: NextRequest) {
     const token = await getGoogleAccessTokenForRequest(request, requiredScopes);
 
     if (!token.ok) {
-      safeTokenDiagnosticLog(token.reason, token.diagnostics);
-
       if (token.reason === "missing_scope") {
-        return errorResponse("MISSING_SCOPE", missingScopeMessage(token.missingScopes ?? []), 403, {
+        return errorResponse("MISSING_SCOPE", "Google token is missing required scopes for this request.", 403, {
           missingScopes: token.missingScopes,
           reconnectRequired: true,
         });
       }
 
-      if (token.reason === "not_authenticated") {
-        return errorResponse("NOT_AUTHENTICATED", "Sign in with Google before fetching Gmail and Calendar context.", 401, {
-          reconnectRequired: true,
-        });
-      }
-
-      if (token.reason === "no_access_token") {
-        return errorResponse("NO_ACCESS_TOKEN", "Google access token is missing. Sign out and reconnect Google.", 401, {
-          reconnectRequired: true,
-        });
-      }
-
-      if (token.reason === "no_refresh_token") {
-        return errorResponse(
-          "NO_REFRESH_TOKEN",
-          "Google refresh token is missing. Sign out and reconnect Google so InboxCast can request offline access.",
-          401,
-          { reconnectRequired: true },
-        );
-      }
-
-      if (token.reason === "refresh_failed") {
-        return errorResponse("REFRESH_FAILED", "Google token refresh failed. Sign out and reconnect Google.", 401, {
-          reconnectRequired: true,
-        });
-      }
-
-      return errorResponse("SERVER_ERROR", "Google OAuth is not configured for this deployment.", 500);
+      return errorResponse(
+        token.reason === "not_connected" ? "NOT_CONNECTED" : "REFRESH_FAILED",
+        "Reconnect Google account to fetch Gmail and Calendar context.",
+        401,
+        { reconnectRequired: true },
+      );
     }
 
     const [gmail, calendarEvents] = await Promise.all([
@@ -209,33 +136,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response);
   } catch (error) {
     if (error instanceof GoogleApiError) {
-      const isRateLimited = isGoogleRateLimitError(error.status, error.message);
+      const isRateLimited =
+        error.status === 429 ||
+        error.message.toLowerCase().includes("rate limit") ||
+        error.message.toLowerCase().includes("too many concurrent requests");
 
-      if (isRateLimited) {
-        return errorResponse("GOOGLE_RATE_LIMIT", "Google rate limit reached. Try again in a minute.", error.status, {
-          reconnectRequired: false,
-        });
-      }
-
-      if (isGooglePermissionError(error.status)) {
-        return errorResponse(
-          "GOOGLE_PERMISSION_ERROR",
-          error.status === 401
-            ? "Google API authentication failed. Sign out and reconnect Google."
-            : "Google API permission error. Reconnect Google and approve the required Gmail and Calendar permissions.",
-          error.status,
-          { reconnectRequired: true },
-        );
-      }
-
-      return errorResponse(
-        "GOOGLE_API_ERROR",
-        `Unknown Google API error while fetching briefing context. Status: ${error.status}.`,
-        error.status,
-        {
-          reconnectRequired: error.reconnectRequired,
-        },
-      );
+      return errorResponse("GOOGLE_API_ERROR", `Google API error: ${error.message}`, error.status, {
+        reconnectRequired: error.reconnectRequired && !isRateLimited,
+      });
     }
 
     return errorResponse("SERVER_ERROR", "InboxCast could not fetch briefing context.", 500);

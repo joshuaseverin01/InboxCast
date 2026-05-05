@@ -91,14 +91,9 @@ export type BriefingContextResponse = {
 
 export type BriefingContextErrorCode =
   | "BAD_REQUEST"
-  | "NOT_AUTHENTICATED"
   | "NOT_CONNECTED"
-  | "NO_ACCESS_TOKEN"
-  | "NO_REFRESH_TOKEN"
   | "MISSING_SCOPE"
   | "REFRESH_FAILED"
-  | "GOOGLE_RATE_LIMIT"
-  | "GOOGLE_PERMISSION_ERROR"
   | "GOOGLE_API_ERROR"
   | "SERVER_ERROR";
 

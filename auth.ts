@@ -1,12 +1,18 @@
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
-import { getGoogleOAuthAuthorizationParams, hasGoogleOAuthCredentials } from "@/lib/googleAuth";
+import { getGoogleOAuthScopeString, hasGoogleOAuthCredentials } from "@/lib/googleAuth";
 
 const providers = hasGoogleOAuthCredentials()
   ? [
       Google({
         authorization: {
-          params: getGoogleOAuthAuthorizationParams(),
+          params: {
+            access_type: "offline",
+            include_granted_scopes: "true",
+            prompt: "consent",
+            response_type: "code",
+            scope: getGoogleOAuthScopeString(),
+          },
         },
         clientId: process.env.AUTH_GOOGLE_ID!,
         clientSecret: process.env.AUTH_GOOGLE_SECRET!,
@@ -42,8 +48,6 @@ export const {
         connected: Boolean(token.google?.accessToken),
         expiresAt: token.google?.expiresAt,
         grantedScopes: token.google?.scope ?? "",
-        hasAccessToken: Boolean(token.google?.accessToken),
-        hasRefreshToken: Boolean(token.google?.refreshToken),
       };
 
       return session;

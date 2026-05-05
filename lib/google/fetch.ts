@@ -15,7 +15,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function isGoogleRateLimitError(status: number, message: string) {
+function isRateLimitError(status: number, message: string) {
   const lowerMessage = message.toLowerCase();
   return (
     status === 429 ||
@@ -23,10 +23,6 @@ export function isGoogleRateLimitError(status: number, message: string) {
     lowerMessage.includes("too many concurrent requests") ||
     lowerMessage.includes("quota")
   );
-}
-
-export function isGooglePermissionError(status: number) {
-  return status === 401 || status === 403;
 }
 
 function retryDelay(attempt: number) {
@@ -43,7 +39,7 @@ export async function fetchGoogleJson<T>(url: URL, accessToken: string): Promise
       if (!(error instanceof GoogleApiError)) throw error;
       lastError = error;
 
-      if (!isGoogleRateLimitError(error.status, error.message) || attempt === MAX_RETRIES) {
+      if (!isRateLimitError(error.status, error.message) || attempt === MAX_RETRIES) {
         throw error;
       }
 
@@ -71,7 +67,7 @@ async function fetchGoogleJsonOnce<T>(url: URL, accessToken: string): Promise<T>
     throw new GoogleApiError(
       message,
       response.status,
-      isGooglePermissionError(response.status),
+      response.status === 401 || response.status === 403,
     );
   }
 

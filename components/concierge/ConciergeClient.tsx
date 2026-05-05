@@ -110,21 +110,15 @@ type ReplyDraftState = {
 const MAX_SELECTED_EMAILS = 3;
 
 function friendlyError(message: string) {
-  const lower = message.toLowerCase();
-
   if (message.includes("OPENAI_API_KEY")) {
     return "OpenAI is not configured. Add OPENAI_API_KEY in .env.local or Vercel environment variables, then restart or redeploy.";
   }
 
-  if (lower.includes("quota") || lower.includes("billing")) {
+  if (message.toLowerCase().includes("quota") || message.toLowerCase().includes("billing")) {
     return "OpenAI quota or billing needs attention. Check the OpenAI project billing and usage limits, then try again.";
   }
 
-  if (lower.includes("google") && lower.includes("rate limit")) {
-    return "Google rate limit reached. Try again in a minute.";
-  }
-
-  if (lower.includes("openai") && lower.includes("rate limit")) {
+  if (message.toLowerCase().includes("rate limit")) {
     return "OpenAI rate limit reached. Wait a moment, then try again.";
   }
 

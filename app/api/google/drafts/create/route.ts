@@ -27,7 +27,6 @@ type ValidDraft = {
 type ValidationResult = { ok: true; draft: ValidDraft } | { ok: false; error: string };
 
 type RecipientParseResult = { recipients: string[] } | { error: string };
-type TokenFailure = Extract<Awaited<ReturnType<typeof getGoogleAccessTokenForRequest>>, { ok: false }>;
 
 const MAX_SUBJECT_LENGTH = 180;
 const MAX_BODY_LENGTH = 20_000;
@@ -43,39 +42,6 @@ function errorResponse(message: string, status: number, options?: { reconnectReq
     },
     { status },
   );
-}
-
-function tokenErrorResponse(token: TokenFailure) {
-  if (token.reason === "missing_scope") {
-    return errorResponse("To create Gmail drafts, reconnect Google and approve Gmail draft permission.", 403, {
-      missingScopes: token.missingScopes,
-      reconnectRequired: true,
-    });
-  }
-
-  if (token.reason === "misconfigured") {
-    return errorResponse("Google OAuth is not configured for this deployment.", 500);
-  }
-
-  if (token.reason === "not_authenticated") {
-    return errorResponse("Sign in before creating Gmail drafts.", 401, { reconnectRequired: true });
-  }
-
-  if (token.reason === "no_access_token") {
-    return errorResponse("Google access token is missing. Sign out and reconnect Google.", 401, {
-      reconnectRequired: true,
-    });
-  }
-
-  if (token.reason === "no_refresh_token" || token.reason === "refresh_failed") {
-    return errorResponse("Google token refresh failed. Sign out and reconnect Google.", 401, {
-      reconnectRequired: true,
-    });
-  }
-
-  return errorResponse("Reconnect Google account before creating Gmail drafts.", 401, {
-    reconnectRequired: true,
-  });
 }
 
 function asText(value: unknown) {
@@ -183,7 +149,20 @@ export async function POST(request: NextRequest) {
   const token = await getGoogleAccessTokenForRequest(request, [GOOGLE_OAUTH_SCOPES.gmailCompose]);
 
   if (!token.ok) {
-    return tokenErrorResponse(token);
+    if (token.reason === "missing_scope") {
+      return errorResponse("To create Gmail drafts, reconnect Google and approve Gmail draft permission.", 403, {
+        missingScopes: token.missingScopes,
+        reconnectRequired: true,
+      });
+    }
+
+    if (token.reason === "misconfigured") {
+      return errorResponse("Google OAuth is not configured for this deployment.", 500);
+    }
+
+    return errorResponse("Reconnect Google account before creating Gmail drafts.", 401, {
+      reconnectRequired: true,
+    });
   }
 
   const payload = (await request.json().catch(() => null)) as DraftRequest | null;
