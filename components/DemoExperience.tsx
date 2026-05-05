@@ -1,6 +1,4 @@
 "use client";
-
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
@@ -282,9 +280,6 @@ function DemoBanner() {
             account connected. No emails sent.
           </p>
         </div>
-        <Link className="secondary-button shrink-0 px-4 py-2 text-xs" href="/dashboard">
-          Open real app
-        </Link>
       </div>
     </div>
   );
@@ -666,9 +661,6 @@ export function DemoExperience() {
                 <Play className="h-4 w-4 fill-current" />
                 Start demo briefing
               </button>
-              <Link className="secondary-button" href="/dashboard">
-                Open real app
-              </Link>
             </div>
           </div>
 
