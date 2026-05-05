@@ -32,11 +32,11 @@ export const {
         // Google OAuth tokens are kept in the server-readable Auth.js JWT only.
         // The session callback below intentionally exposes connection metadata, never token values.
         token.google = {
-          accessToken: account.access_token,
-          expiresAt: account.expires_at,
+          accessToken: account.access_token ?? token.google?.accessToken,
+          expiresAt: account.expires_at ?? token.google?.expiresAt,
           refreshToken: account.refresh_token ?? token.google?.refreshToken,
-          scope: account.scope,
-          tokenType: account.token_type,
+          scope: account.scope ?? token.google?.scope,
+          tokenType: account.token_type ?? token.google?.tokenType,
         };
       }
 

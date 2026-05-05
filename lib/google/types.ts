@@ -97,12 +97,21 @@ export type BriefingContextErrorCode =
   | "GOOGLE_API_ERROR"
   | "SERVER_ERROR";
 
+export type BriefingContextNotConnectedReason =
+  | "NO_SESSION"
+  | "NO_USER"
+  | "NO_ACCESS_TOKEN"
+  | "NO_REFRESH_TOKEN"
+  | "MISSING_SCOPE"
+  | "FALSE_CONNECTED_FLAG";
+
 export type BriefingContextErrorResponse = {
   error: {
     code: BriefingContextErrorCode;
     message: string;
     reconnectRequired?: boolean;
     missingScopes?: string[];
+    notConnectedReason?: BriefingContextNotConnectedReason;
   };
 };
 

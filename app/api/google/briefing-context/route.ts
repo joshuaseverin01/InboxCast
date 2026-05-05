@@ -1,12 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { Session } from "next-auth";
+import { auth } from "@/auth";
 import { GoogleApiError } from "@/lib/google/fetch";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/googleAuth";
 import { fetchCalendarEventsForRange, countCalendarConflicts } from "@/lib/google/calendar";
 import { fetchGmailMetadataForRange } from "@/lib/google/gmail";
-import { getGoogleAccessTokenForRequest } from "@/lib/google/tokens";
+import { getGoogleAccessTokenForRequest, type GoogleTokenDiagnostics } from "@/lib/google/tokens";
 import type {
   BriefingContextErrorCode,
   BriefingContextErrorResponse,
+  BriefingContextNotConnectedReason,
   BriefingContextRequest,
   BriefingContextResponse,
 } from "@/lib/google/types";
@@ -19,7 +22,11 @@ function errorResponse(
   code: BriefingContextErrorCode,
   message: string,
   status: number,
-  options?: { reconnectRequired?: boolean; missingScopes?: string[] },
+  options?: {
+    reconnectRequired?: boolean;
+    missingScopes?: string[];
+    notConnectedReason?: BriefingContextNotConnectedReason;
+  },
 ) {
   const body: BriefingContextErrorResponse = {
     error: {
@@ -65,6 +72,46 @@ function importantEmailCount(messages: BriefingContextResponse["gmail"]["message
   return messages.filter((message) => message.labels.includes("IMPORTANT")).length;
 }
 
+function getNotConnectedReason({
+  diagnostics,
+  missingScope,
+  session,
+}: {
+  diagnostics: GoogleTokenDiagnostics;
+  missingScope: boolean;
+  session: Session | null;
+}): BriefingContextNotConnectedReason | undefined {
+  if (!session) return "NO_SESSION";
+  if (!session.user) return "NO_USER";
+  if (!diagnostics.accessTokenPresent) return "NO_ACCESS_TOKEN";
+  if (missingScope) return "MISSING_SCOPE";
+  if (!diagnostics.refreshTokenPresent) return "NO_REFRESH_TOKEN";
+  if (session.google?.connected === false) return "FALSE_CONNECTED_FLAG";
+  return undefined;
+}
+
+function logConnectionDiagnostics({
+  diagnostics,
+  notConnectedReason,
+  session,
+}: {
+  diagnostics: GoogleTokenDiagnostics;
+  notConnectedReason: BriefingContextNotConnectedReason;
+  session: Session | null;
+}) {
+  console.warn("google_connection_diagnostics", {
+    route: "briefing-context",
+    sessionPresent: Boolean(session),
+    userPresent: Boolean(session?.user),
+    accessTokenPresent: diagnostics.accessTokenPresent,
+    refreshTokenPresent: diagnostics.refreshTokenPresent,
+    expiryPresent: diagnostics.expiryPresent,
+    scopePresent: diagnostics.scopePresent,
+    googleConnectedFlag: Boolean(session?.google?.connected),
+    notConnectedReason,
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const payload = (await request.json()) as BriefingContextRequest;
@@ -79,12 +126,23 @@ export async function POST(request: NextRequest) {
       GOOGLE_OAUTH_SCOPES.gmailMetadata,
       ...(filters.includeCalendar ? [GOOGLE_OAUTH_SCOPES.calendarEventsReadonly] : []),
     ];
-    const token = await getGoogleAccessTokenForRequest(request, requiredScopes);
+    const [session, token] = await Promise.all([auth(), getGoogleAccessTokenForRequest(request, requiredScopes)]);
 
     if (!token.ok) {
+      const notConnectedReason = getNotConnectedReason({
+        diagnostics: token.diagnostics,
+        missingScope: token.reason === "missing_scope",
+        session,
+      });
+
+      if (notConnectedReason) {
+        logConnectionDiagnostics({ diagnostics: token.diagnostics, notConnectedReason, session });
+      }
+
       if (token.reason === "missing_scope") {
         return errorResponse("MISSING_SCOPE", "Google token is missing required scopes for this request.", 403, {
           missingScopes: token.missingScopes,
+          notConnectedReason,
           reconnectRequired: true,
         });
       }
@@ -93,7 +151,7 @@ export async function POST(request: NextRequest) {
         token.reason === "not_connected" ? "NOT_CONNECTED" : "REFRESH_FAILED",
         "Reconnect Google account to fetch Gmail and Calendar context.",
         401,
-        { reconnectRequired: true },
+        { ...(notConnectedReason ? { notConnectedReason } : {}), reconnectRequired: true },
       );
     }
 
