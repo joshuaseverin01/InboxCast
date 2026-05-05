@@ -11,6 +11,7 @@ type ReadMessagesRequest = {
 };
 
 type MessageIdsResult = { messageIds: string[] } | { error: string };
+type TokenFailure = Extract<Awaited<ReturnType<typeof getGoogleAccessTokenForRequest>>, { ok: false }>;
 
 const MAX_MESSAGES_PER_READ = 3;
 const messageIdPattern = /^[A-Za-z0-9_-]+$/;
@@ -25,6 +26,33 @@ function errorResponse(message: string, status: number, options?: { reconnectReq
     },
     { status },
   );
+}
+
+function tokenErrorResponse(token: TokenFailure) {
+  if (token.reason === "missing_scope") {
+    return errorResponse("To read full email content, reconnect Google and approve Gmail read-only permission.", 403, {
+      missingScopes: token.missingScopes,
+      reconnectRequired: true,
+    });
+  }
+
+  if (token.reason === "not_authenticated") {
+    return errorResponse("Sign in before reading selected emails.", 401, { reconnectRequired: true });
+  }
+
+  if (token.reason === "no_access_token") {
+    return errorResponse("Google access token is missing. Sign out and reconnect Google.", 401, {
+      reconnectRequired: true,
+    });
+  }
+
+  if (token.reason === "no_refresh_token" || token.reason === "refresh_failed") {
+    return errorResponse("Google token refresh failed. Sign out and reconnect Google.", 401, {
+      reconnectRequired: true,
+    });
+  }
+
+  return errorResponse("Google OAuth is not configured for this deployment.", 500);
 }
 
 function parseMessageIds(payload: ReadMessagesRequest): MessageIdsResult {
@@ -56,16 +84,7 @@ export async function POST(request: NextRequest) {
   const token = await getGoogleAccessTokenForRequest(request, [GOOGLE_OAUTH_SCOPES.gmailReadonly]);
 
   if (!token.ok) {
-    if (token.reason === "missing_scope") {
-      return errorResponse("To read full email content, reconnect Google and approve Gmail read-only permission.", 403, {
-        missingScopes: token.missingScopes,
-        reconnectRequired: true,
-      });
-    }
-
-    return errorResponse("Reconnect Google account before reading selected emails.", 401, {
-      reconnectRequired: true,
-    });
+    return tokenErrorResponse(token);
   }
 
   const payload = (await request.json().catch(() => null)) as ReadMessagesRequest | null;

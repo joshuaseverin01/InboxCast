@@ -4,6 +4,8 @@ type GoogleSessionConnection = {
   connected: boolean;
   grantedScopes: string;
   expiresAt?: number;
+  hasAccessToken?: boolean;
+  hasRefreshToken?: boolean;
 };
 
 type GoogleTokenConnection = {

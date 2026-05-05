@@ -1,7 +1,7 @@
 import { LogIn, RefreshCcw, Unplug } from "lucide-react";
 import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
-import { hasGoogleOAuthCredentials } from "@/lib/googleAuth";
+import { getGoogleOAuthAuthorizationParams, hasGoogleOAuthCredentials } from "@/lib/googleAuth";
 import { cn } from "@/lib/utils";
 
 export function ConnectGoogleAccountButton({
@@ -24,7 +24,7 @@ export function ConnectGoogleAccountButton({
           redirect("/settings?connection=missing-config");
         }
 
-        await signIn("google", { redirectTo: "/settings?connection=success" });
+        await signIn("google", { redirectTo: "/settings?connection=success" }, getGoogleOAuthAuthorizationParams());
       }}
     >
       <button
@@ -34,6 +34,22 @@ export function ConnectGoogleAccountButton({
       >
         {reconnect ? <RefreshCcw className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}
         {configured ? label : "Google OAuth not configured"}
+      </button>
+    </form>
+  );
+}
+
+export function SignOutAndReconnectGoogleButton({ className }: { className?: string }) {
+  return (
+    <form
+      action={async () => {
+        "use server";
+        await signOut({ redirectTo: "/private-beta?reconnect=google" });
+      }}
+    >
+      <button className={cn("secondary-button w-full sm:w-auto", className)} type="submit">
+        <RefreshCcw className="h-4 w-4" />
+        Sign out and reconnect Google
       </button>
     </form>
   );

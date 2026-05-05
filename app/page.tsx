@@ -65,15 +65,12 @@ export default function LandingPage() {
             Listen to your emails, calendar, action items, and suggested replies in a calm podcast-style briefing.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Link className="primary-button" href="/dashboard">
-              Open Dashboard
+            <Link className="primary-button" href="/demo">
+              Try Demo
               <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link className="secondary-button" href="/demo">
-              Try demo
-            </Link>
-            <Link className="secondary-button" href="/briefing">
-              Open Briefing Flow
+            <Link className="secondary-button" href="/private-beta">
+              Private Beta Sign In
             </Link>
           </div>
         </div>
