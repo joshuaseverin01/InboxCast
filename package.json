@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:prospectus": "node scripts/build-prospectus-pdf.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
@@ -22,6 +23,7 @@
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
+    "puppeteer-core": "^24.42.0",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2"
   }

@@ -69,6 +69,9 @@ export default function LandingPage() {
               Open Dashboard
               <ArrowRight className="h-4 w-4" />
             </Link>
+            <Link className="secondary-button" href="/demo">
+              Try demo
+            </Link>
             <Link className="secondary-button" href="/briefing">
               Open Briefing Flow
             </Link>

@@ -58,6 +58,14 @@ npm run dev
 - PDF exports are generated in the browser and are not uploaded or stored permanently.
 - OpenAI usage counters in Settings are approximate browser-local counts, not billing records.
 
+## Public Demo
+
+- `/demo` is a public interactive demo route for portfolio, advisor, investor, or tester walkthroughs.
+- The demo uses fictional inbox and calendar data only.
+- Demo mode does not require login, connect Google, call Google APIs, call OpenAI routes, or create real Gmail drafts.
+- Demo saved outputs use the separate localStorage key `inboxcast_demo_outputs`.
+- The real authenticated app flow remains under the normal Dashboard, Briefing, Concierge, Outputs, and Settings routes.
+
 ## Private Beta/Testing
 
 - InboxCast is a private beta MVP for trusted testers, not a public production SaaS app.
